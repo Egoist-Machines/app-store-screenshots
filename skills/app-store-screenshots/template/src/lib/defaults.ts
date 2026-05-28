@@ -1,4 +1,5 @@
 import { DEFAULT_LOCALE } from "./locale";
+import { PROJECT_SCHEMA_VERSION } from "./constants";
 import type { Device, ProjectState, Slide } from "./types";
 
 let _id = 0;
@@ -107,6 +108,7 @@ function fgStarter(): Slide[] {
 }
 
 export const DEFAULT_PROJECT: ProjectState = {
+  schemaVersion: PROJECT_SCHEMA_VERSION,
   appName: "My App",
   themeId: "clean-light",
   locales: [DEFAULT_LOCALE],

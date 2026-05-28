@@ -32,6 +32,11 @@ export type ElementTransform = {
 
 export type ElementId = "caption" | "device" | "deviceSecondary";
 
+export type SelectedElement = {
+  slideId: string;
+  elementId: ElementId;
+};
+
 // Per-locale text keyed by locale code (e.g. "en", "de"). A locale is absent
 // if the user hasn't typed anything for it; renderers fall back to en (see
 // lib/locale.ts). The set of locales a project targets lives on
@@ -64,6 +69,7 @@ export type Theme = {
 };
 
 export type ProjectState = {
+  schemaVersion?: number;
   appName: string;
   themeId: ThemeId;
   // Locales this project targets. Drives the toolbar dropdown and bulk export.

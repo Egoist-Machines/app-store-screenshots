@@ -11,11 +11,13 @@ bun dev       # http://localhost:3000
 
 ## What's inside
 
-- **Visual editor** (`src/components/editor/`) — drag-to-reorder, click-to-edit text, screenshot drop targets, per-slide layout switcher, dark/light toggle.
+- **Connected canvas editor** (`src/components/editor/`) — every screen sits on one horizontal canvas, so phones, captions, and other elements can be dragged across screen boundaries and exported as split crops.
+- **Screen controls** — drag-to-reorder screens, click-to-edit text, screenshot drop targets, per-screen layout switcher, dark/light toggle.
 - **Device frames** (`src/components/editor/device-frames.tsx`) — iPhone (PNG mockup), iPad, Android phone, Android tablet (portrait + landscape), feature graphic.
 - **Auto-save (git-trackable)** — every change is persisted within ~600ms to **`app-store-screenshots.json`** at the project root (via `/api/project`) **and** mirrored to `localStorage` as an instant-paint cache. Commit `app-store-screenshots.json` and you can `git clone` to another machine and resume exactly where you left off.
 - **Multi-device decks** — iOS and Android slide decks live side by side; switching the platform tab preserves both.
-- **One-click export** — bulk PNG export at any required App Store / Play Store resolution using `html-to-image`.
+- **One-click export** — bulk PNG export at any required App Store / Play Store resolution using `html-to-image`; each PNG is a crop of the connected canvas.
+- **Project migration** — older `app-store-screenshots.json` files are migrated on load. Existing per-slide transforms remain valid; any element dragged beyond its original screen now intentionally appears in neighboring exports.
 
 ## Adding screenshots
 
@@ -29,7 +31,7 @@ Two ways:
 
 ## Exporting
 
-The toolbar dropdown lists every Apple/Google-required size for the current device. Click **Export all** to download a numbered set of PNGs (e.g. `01-hero-iphone-en-1320x2868.png`).
+The toolbar dropdown lists every Apple/Google-required size for the current device. Click **Export bundle** to download a zip. Every exported PNG is clipped from the connected canvas, so an element that straddles two screens appears split exactly where you placed it.
 
 ## Customizing
 
@@ -37,7 +39,7 @@ The toolbar dropdown lists every Apple/Google-required size for the current devi
 |-------|------|
 | `src/lib/constants.ts` | Canvas dimensions, export sizes, frame ratios, themes, locales |
 | `src/lib/defaults.ts` | Initial slides shown when localStorage is empty |
-| `src/components/editor/slide-canvas.tsx` | Add new layouts (factory in `renderLayout`) |
+| `src/components/editor/slide-canvas.tsx` | Add new layouts and connected-canvas element rendering |
 | `src/components/editor/device-frames.tsx` | Tweak device chrome (bezel radii, camera dots) |
 | `src/app/layout.tsx` | Swap the font (`next/font/google`) |
 
@@ -45,5 +47,6 @@ The toolbar dropdown lists every Apple/Google-required size for the current devi
 
 - `mockup.png` is the iPhone bezel overlay; replacing it requires re-measuring the `PHONE_SCREEN` constants.
 - Image preloading converts every static path to a base64 data URI before exports run — this prevents the html-to-image race where some slide screenshots come out black.
-- Reset via the toolbar's circular arrow icon clears in-memory state and reloads the default slides. To wipe disk state too, delete `app-store-screenshots.json`.
+- Reset via the toolbar's circular arrow icon clears in-memory state and reloads the default screens. To wipe disk state too, delete `app-store-screenshots.json`.
 - **Persistence model** — the canonical state lives in `app-store-screenshots.json` (git-tracked). On load, the editor reads localStorage first for instant paint, then overwrites with the file contents if present. On save, both are written. If you ever see a conflict, the file always wins.
+- **Migration model** — schema v1 projects do not need a manual conversion. On first load, the editor upgrades localized text and transform records, writes `schemaVersion: 2`, and preserves all existing screens. Cross-screen placement is represented by ordinary element coordinates that extend past a screen edge.

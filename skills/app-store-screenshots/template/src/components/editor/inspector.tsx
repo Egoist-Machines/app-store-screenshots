@@ -51,7 +51,7 @@ export function Inspector({ slide, locale, selectedElementId, onChange }: Props)
     <div className="flex h-full flex-col">
       <div className="border-b p-3">
         <div className="flex items-baseline justify-between gap-2">
-          <h2 className="text-sm font-semibold">Slide settings</h2>
+          <h2 className="text-sm font-semibold">Screen settings</h2>
           <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
             editing · {locale.toUpperCase()}
           </span>

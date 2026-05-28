@@ -1,9 +1,9 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { STORAGE_KEY } from "./constants";
+import { PROJECT_SCHEMA_VERSION, STORAGE_KEY } from "./constants";
 import { DEFAULT_PROJECT } from "./defaults";
 import { coerceLocalized } from "./locale";
-import type { Device, ProjectState, Slide } from "./types";
+import type { Device, ElementTransform, ProjectState, Slide } from "./types";
 
 const HISTORY_LIMIT = 50;
 // Coalesce rapid edits (typing, slider drags) into a single undo step.
@@ -11,12 +11,42 @@ const COALESCE_MS = 500;
 // Debounce file/localStorage writes — frequent enough to feel instant, infrequent enough not to thrash disk.
 const SAVE_DEBOUNCE_MS = 600;
 
-// Migrate pre-locale string label/headline into { en: value }.
+function cleanTransform(value: unknown): ElementTransform | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const raw = value as Partial<ElementTransform>;
+  const required = [raw.x, raw.y, raw.width, raw.height];
+  if (!required.every((n) => typeof n === "number" && Number.isFinite(n))) return undefined;
+  return {
+    x: raw.x!,
+    y: raw.y!,
+    width: Math.max(1, raw.width!),
+    height: Math.max(1, raw.height!),
+    ...(typeof raw.rotation === "number" && Number.isFinite(raw.rotation)
+      ? { rotation: raw.rotation }
+      : {}),
+    ...(typeof raw.zIndex === "number" && Number.isFinite(raw.zIndex)
+      ? { zIndex: raw.zIndex }
+      : {}),
+  };
+}
+
+// Migrate older projects into the connected-canvas schema. v1 projects stored
+// per-slide transforms inside the isolated screen bounds; v2 keeps that shape
+// and interprets coordinates outside a screen as intentional cross-screen art.
 function migrateSlide(slide: Slide): Slide {
+  const transforms = slide.transforms
+    ? Object.fromEntries(
+        Object.entries(slide.transforms)
+          .map(([id, transform]) => [id, cleanTransform(transform)])
+          .filter((entry): entry is [string, ElementTransform] => !!entry[1]),
+      )
+    : undefined;
+
   return {
     ...slide,
     label: coerceLocalized(slide.label as unknown),
     headline: coerceLocalized(slide.headline as unknown),
+    ...(transforms && Object.keys(transforms).length > 0 ? { transforms } : { transforms: undefined }),
   };
 }
 
@@ -32,6 +62,7 @@ function mergeWithDefaults(parsed: Partial<ProjectState>): ProjectState {
   const merged: ProjectState = {
     ...DEFAULT_PROJECT,
     ...parsed,
+    schemaVersion: PROJECT_SCHEMA_VERSION,
     slidesByDevice: {
       ...DEFAULT_PROJECT.slidesByDevice,
       ...slidesByDevice,

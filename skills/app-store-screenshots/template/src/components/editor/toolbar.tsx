@@ -158,7 +158,7 @@ export function Toolbar(props: Props) {
           size="icon"
           className="h-8 w-8"
           onClick={() => setResetOpen(true)}
-          title="Reset slides to defaults"
+          title="Reset screens to defaults"
           aria-label="Reset"
           disabled={props.busy}
         >
@@ -181,7 +181,7 @@ export function Toolbar(props: Props) {
           <DialogHeader>
             <DialogTitle>Reset to defaults?</DialogTitle>
             <DialogDescription>
-              Choose whether to reset just <span className="font-medium">{deviceLabel}</span> or every device deck. Your edits, uploaded screenshots, and copy will be lost.
+              Choose whether to reset just <span className="font-medium">{deviceLabel}</span> or every device deck. Your canvas edits, uploaded screenshots, and copy will be lost.
             </DialogDescription>
           </DialogHeader>
           <div className="flex flex-wrap justify-end gap-2">

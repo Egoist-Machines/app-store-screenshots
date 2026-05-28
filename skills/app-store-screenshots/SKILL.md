@@ -9,13 +9,15 @@ description: Use when building App Store or Google Play screenshot pages, genera
 
 Scaffold a pre-built Next.js + ShadCN editor that lets the user design and export App Store **and** Google Play screenshots as **advertisements** (not UI showcases). The editor handles all the heavy lifting:
 
-- Live preview at the canvas's true resolution (scaled to fit)
-- Drag-to-reorder slides, inline text editing, layout switcher per slide
+- Connected live preview at the canvas's true resolution (scaled to fit)
+- Drag-to-reorder screens, inline text editing, layout switcher per screen
+- Cross-screen mockups: phone/device frames, captions, and layered elements can be moved across adjacent screens, then exported as clipped crops
 - Drop-target screenshot picker (file → saved to `public/screenshots/uploaded/<hash>.png`)
 - Auto-save to **`app-store-screenshots.json`** at the project root (git-trackable) + `localStorage` mirror
 - Easy iOS ↔ Android platform switch — separate slide decks live side by side
 - One-click bulk PNG export at every Apple/Google-required resolution via `html-to-image`
 - Light/dark variant toggle per slide, theme presets, locale select
+- Automatic migration for older projects created by this skill; v1 `app-store-screenshots.json` files open as schema v2 connected canvases with their existing layouts intact
 
 Supported devices out of the box:
 - **iPhone** (portrait) — Apple App Store
@@ -89,7 +91,7 @@ The template lives at `<this skill dir>/template/` — when the skill is install
 cp -R "<SKILL_DIR>/template/." "$PWD/"
 ```
 
-If the target directory already has a `package.json`, ask the user before overwriting. For an in-place upgrade, copy only the files the user hasn't customized.
+If the target directory already has a `package.json`, ask the user before overwriting. For an in-place upgrade, preserve the user's `app-store-screenshots.json`, `public/screenshots/`, and `public/app-icon.png`, then copy the template editor/lib files. The editor migrates older project JSON automatically on first load and writes the upgraded schema back through autosave.
 
 ### Install Dependencies
 
@@ -280,6 +282,8 @@ The editor stores headlines and labels per-locale on each slide — switch to a 
 
 Inside the editor, the user picks a device, then hits **Export bundle**. A single zip downloads with every required size × every project locale for that device, organized as `<platform>/<device>/<WxH>/<locale>/NN-<layout>.png`. Repeat per device.
 
+Exports are crops of the connected canvas, not isolated screen renders. If a mockup sits halfway across screen 2 and screen 3, screen 2's PNG contains its left crop and screen 3's PNG contains its right crop exactly as placed.
+
 Project locales come from `app-store-screenshots.json` `locales` field — set during scaffolding (Step 4). Single-locale projects produce a flat per-size structure with just the one locale folder.
 
 If exports come out blank or with black screen rectangles:
@@ -301,6 +305,7 @@ If exports come out blank or with black screen rectangles:
 
 ### Export Quality
 - No clipped text or assets after scaling to export size
+- Cross-screen elements split cleanly across adjacent PNGs
 - Screenshots correctly aligned inside every device frame
 - Filenames sort correctly (zero-padded numeric prefixes)
 - Feature Graphic exports cleanly at 1024×500 (no device frame)
@@ -316,6 +321,18 @@ If exports come out blank or with black screen rectangles:
 | Reset wiped the deck | Reset clears in-memory state and re-saves defaults to `app-store-screenshots.json`. Recover by `git checkout app-store-screenshots.json` if it was committed, or export first before resetting. |
 | Export is blank | Source PNGs probably have alpha — flatten to RGB |
 | `bun dev` port collision | Template defaults to `next dev`; let Next pick the next free port (3001+) |
+
+## Project Migration
+
+The current template writes `schemaVersion: 2`. Existing projects made by earlier versions of this skill usually have no `schemaVersion` and may still store string `label` / `headline` values. Do not hand-edit those projects unless the JSON is invalid. On load, `src/lib/storage.ts`:
+
+1. Converts legacy string copy to localized `{ "en": "..." }` objects.
+2. Sanitizes existing element transforms.
+3. Preserves every existing slide/screen and device deck.
+4. Interprets transforms outside the original screen bounds as cross-screen placement.
+5. Saves the upgraded state back to `app-store-screenshots.json` and `localStorage`.
+
+For in-place upgrades, copy the current template's `src/components/editor/`, `src/lib/`, and package files into the project while preserving user assets and project JSON. Then run the app once and confirm `schemaVersion: 2` appears after autosave.
 
 ## Template Reference
 
@@ -342,12 +359,12 @@ project/
     │   ├── editor/
     │   │   ├── screenshot-editor.tsx   # Top-level editor (state, autosave, export)
     │   │   ├── toolbar.tsx             # Platform tabs, device select, theme, locale, export
-    │   │   ├── sidebar.tsx             # Slide list with @dnd-kit reordering
-    │   │   ├── slide-thumb.tsx         # Draggable slide card
-    │   │   ├── preview-stage.tsx       # ResizeObserver-scaled live preview
+    │   │   ├── sidebar.tsx             # Screen list with @dnd-kit reordering
+    │   │   ├── slide-thumb.tsx         # Draggable screen card
+    │   │   ├── preview-stage.tsx       # ResizeObserver-scaled connected canvas
     │   │   ├── inspector.tsx           # Right-pane controls for active slide
     │   │   ├── screenshot-picker.tsx   # File drop + picker
-    │   │   ├── slide-canvas.tsx        # Data-driven slide renderer (all layouts)
+    │   │   ├── slide-canvas.tsx        # Data-driven screen/deck renderer (all layouts)
     │   │   └── device-frames.tsx       # Phone, AndroidPhone, IPad, tablets
     │   └── ui/                         # Minimal ShadCN primitives (button, select, etc.)
     └── lib/

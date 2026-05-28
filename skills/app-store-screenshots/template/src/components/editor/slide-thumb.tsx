@@ -8,10 +8,11 @@ import { LAYOUT_LABEL } from "@/lib/constants";
 import { pickText } from "@/lib/locale";
 import type { Device, Orientation, Slide, Theme } from "@/lib/types";
 import { cn } from "@/lib/utils";
-import { SlideCanvas, getCanvas } from "./slide-canvas";
+import { DeckCanvas, getCanvas } from "./slide-canvas";
 
 type Props = {
   slide: Slide;
+  slides: Slide[];
   index: number;
   active: boolean;
   device: Device;
@@ -30,6 +31,7 @@ const THUMB_W = 60;
 
 export function SlideThumb({
   slide,
+  slides,
   index,
   active,
   device,
@@ -73,7 +75,7 @@ export function SlideThumb({
         className="flex w-3 cursor-grab items-center justify-center text-muted-foreground/60 hover:text-foreground focus-visible:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring active:cursor-grabbing"
         {...attributes}
         {...listeners}
-        aria-label={`Reorder slide ${index + 1} (press space, then arrow keys)`}
+        aria-label={`Reorder screen ${index + 1} (press space, then arrow keys)`}
       >
         <GripVertical className="h-4 w-4" />
       </button>
@@ -84,23 +86,24 @@ export function SlideThumb({
         className="flex flex-1 items-center gap-3 overflow-hidden text-left"
       >
         <div
+          aria-hidden
           className="relative shrink-0 overflow-hidden rounded border bg-muted"
           style={{ width: THUMB_W, height: tileH }}
         >
           <div
             style={{
-              width: cW,
+              width: cW * slides.length,
               height: cH,
               position: "absolute",
               top: 0,
-              left: 0,
+              left: -index * cW,
               transformOrigin: "top left",
               transform: `scale(${scale})`,
               pointerEvents: "none",
             }}
           >
-            <SlideCanvas
-              slide={slide}
+            <DeckCanvas
+              slides={slides}
               device={device}
               orientation={orientation}
               theme={theme}
@@ -113,7 +116,7 @@ export function SlideThumb({
         </div>
         <div className="flex min-w-0 flex-1 flex-col">
           <span className="truncate text-[10px] uppercase tracking-wide text-muted-foreground">
-            {`Slide ${index + 1} · ${LAYOUT_LABEL[slide.layout]}`}
+            {`Screen ${index + 1} · ${LAYOUT_LABEL[slide.layout]}`}
           </span>
           <span className="truncate text-sm font-medium leading-tight">
             {headline.split("\n")[0] || (
@@ -136,8 +139,8 @@ export function SlideThumb({
           variant="ghost"
           className="h-6 w-6"
           onClick={onDuplicate}
-          aria-label={`Duplicate slide ${index + 1}`}
-          title="Duplicate slide"
+          aria-label={`Duplicate screen ${index + 1}`}
+          title="Duplicate screen"
         >
           <Copy className="h-3.5 w-3.5" />
         </Button>
@@ -147,8 +150,8 @@ export function SlideThumb({
           variant="ghost"
           className="h-6 w-6 hover:text-destructive"
           onClick={onDelete}
-          aria-label={`Delete slide ${index + 1}`}
-          title="Delete slide (undoable)"
+          aria-label={`Delete screen ${index + 1}`}
+          title="Delete screen (undoable)"
         >
           <Trash2 className="h-3.5 w-3.5" />
         </Button>

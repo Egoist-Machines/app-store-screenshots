@@ -12,17 +12,17 @@ import { detectPlatform, nid } from "@/lib/defaults";
 import { preloadImages } from "@/lib/image-cache";
 import { resolveScreenshot, writeLocalized } from "@/lib/locale";
 import { useProject } from "@/lib/storage";
-import type { Device, ElementId, Slide } from "@/lib/types";
+import type { Device, ElementId, ElementTransform, SelectedElement, Slide } from "@/lib/types";
 import { Inspector } from "./inspector";
 import { PreviewStage } from "./preview-stage";
 import { Sidebar } from "./sidebar";
-import { SlideCanvas, getCanvas } from "./slide-canvas";
+import { DeckCanvas, getCanvas } from "./slide-canvas";
 import { Toolbar } from "./toolbar";
 
 export function ScreenshotEditor() {
   const { state, setState, hydrated, savedAt, saveError, reset, resetDevice, undo, redo } = useProject();
   const [activeSlideId, setActiveSlideId] = React.useState<string | null>(null);
-  const [selectedElementId, setSelectedElementId] = React.useState<ElementId | null>(null);
+  const [selectedElement, setSelectedElement] = React.useState<SelectedElement | null>(null);
   const [exporting, setExporting] = React.useState<string | null>(null);
   const [ready, setReady] = React.useState(false);
   const [exportLocaleOverride, setExportLocaleOverride] = React.useState<string | null>(null);
@@ -34,8 +34,10 @@ export function ScreenshotEditor() {
   const theme = THEMES[state.themeId];
 
   React.useEffect(() => {
-    setSelectedElementId(null);
-  }, [activeSlide?.id]);
+    if (selectedElement && selectedElement.slideId !== activeSlide?.id) {
+      setSelectedElement(null);
+    }
+  }, [activeSlide?.id, selectedElement]);
 
   React.useEffect(() => {
     if (!hydrated) return;
@@ -134,7 +136,7 @@ export function ScreenshotEditor() {
       setActiveSlideId((cur) => (cur === id ? fallback?.id || null : cur));
       delete exportRefs.current[id];
 
-      toast("Slide deleted", {
+      toast("Screen deleted", {
         action: {
           label: "Undo",
           onClick: () => {
@@ -177,6 +179,29 @@ export function ScreenshotEditor() {
       } as Partial<Slide>);
     },
     [patchSlide, state.locale],
+  );
+
+  const patchElementTransform = React.useCallback(
+    (slideId: string, elementId: ElementId, transform: ElementTransform) => {
+      setState((prev) => ({
+        ...prev,
+        slidesByDevice: {
+          ...prev.slidesByDevice,
+          [prev.device]: (prev.slidesByDevice[prev.device] || []).map((slide) =>
+            slide.id === slideId
+              ? {
+                  ...slide,
+                  transforms: {
+                    ...(slide.transforms || {}),
+                    [elementId]: transform,
+                  },
+                }
+              : slide,
+          ),
+        },
+      }));
+    },
+    [setState],
   );
 
   const duplicateSlide = React.useCallback(
@@ -226,7 +251,7 @@ export function ScreenshotEditor() {
         return;
       }
       if (e.key === "Escape") {
-        setSelectedElementId(null);
+        setSelectedElement(null);
         if (target && "blur" in target && typeof target.blur === "function") target.blur();
         return;
       }
@@ -270,7 +295,7 @@ export function ScreenshotEditor() {
 
   async function exportAll() {
     if (!currentSlides.length) {
-      toast.error("No slides to export");
+      toast.error("No screens to export");
       return;
     }
 
@@ -316,7 +341,7 @@ export function ScreenshotEditor() {
           const el = exportRefs.current[slide.id];
           if (!el) {
             failed += 1;
-            errors.push(`${locale} ${size.w}×${size.h} slide ${i + 1}: render target missing`);
+            errors.push(`${locale} ${size.w}×${size.h} screen ${i + 1}: render target missing`);
             continue;
           }
           try {
@@ -329,7 +354,7 @@ export function ScreenshotEditor() {
           } catch (e) {
             failed += 1;
             const msg = e instanceof Error ? e.message : String(e);
-            errors.push(`${locale} ${size.w}×${size.h} slide ${i + 1}: ${msg}`);
+            errors.push(`${locale} ${size.w}×${size.h} screen ${i + 1}: ${msg}`);
             console.error("Export failed", { slideId: slide.id, locale, size }, e);
           }
         }
@@ -438,7 +463,7 @@ export function ScreenshotEditor() {
         onResetAll={() => {
           reset();
           setActiveSlideId(null);
-          toast.success("Reset all devices to defaults");
+        toast.success("Reset all devices to defaults");
         }}
         onResetDevice={() => {
           resetDevice(state.device);
@@ -472,29 +497,27 @@ export function ScreenshotEditor() {
         </aside>
 
         <main className="flex flex-1 items-stretch overflow-hidden min-h-0">
-          {activeSlide ? (
+          {activeSlide && currentSlides.length > 0 ? (
             <PreviewStage
-              slide={activeSlide}
+              slides={currentSlides}
+              activeSlideId={activeSlide.id}
               device={state.device}
               orientation={state.orientation}
               theme={theme}
               locale={state.locale}
               appName={state.appName}
               appIcon={state.appIcon}
-              selectedElementId={selectedElementId}
-              onLabelChange={(v) => patchLocalized(activeSlide, "label", v)}
-              onHeadlineChange={(v) => patchLocalized(activeSlide, "headline", v)}
-              onElementChange={(id, t) =>
-                patchSlide(activeSlide.id, {
-                  transforms: { ...(activeSlide.transforms || {}), [id]: t },
-                })
-              }
-              onSelectElement={setSelectedElementId}
+              selectedElement={selectedElement}
+              onActiveSlideChange={setActiveSlideId}
+              onLabelChange={(slide, v) => patchLocalized(slide, "label", v)}
+              onHeadlineChange={(slide, v) => patchLocalized(slide, "headline", v)}
+              onElementChange={patchElementTransform}
+              onSelectElement={setSelectedElement}
             />
           ) : (
             <div className="flex flex-1 flex-col items-center justify-center gap-2 p-8 text-center text-sm text-muted-foreground">
-              <p className="font-medium text-foreground">No slide selected</p>
-              <p>Add a slide on the left to get started.</p>
+              <p className="font-medium text-foreground">No screen selected</p>
+              <p>Add a screen on the left to get started.</p>
             </div>
           )}
         </main>
@@ -504,13 +527,15 @@ export function ScreenshotEditor() {
             <Inspector
               slide={activeSlide}
               locale={state.locale}
-              selectedElementId={selectedElementId}
+              selectedElementId={
+                selectedElement?.slideId === activeSlide.id ? selectedElement.elementId : null
+              }
               onChange={(patch) => patchSlide(activeSlide.id, patch)}
             />
           ) : (
             <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center text-sm text-muted-foreground">
               <p className="font-medium text-foreground">Nothing to inspect</p>
-              <p className="text-xs">Slide settings will appear here once you add or select one.</p>
+              <p className="text-xs">Screen settings will appear here once you add or select one.</p>
             </div>
           )}
         </aside>
@@ -526,25 +551,42 @@ export function ScreenshotEditor() {
           pointerEvents: "none",
         }}
       >
-        {currentSlides.map((slide) => (
+        {currentSlides.map((slide, index) => (
           <div
             key={slide.id}
             ref={(el) => {
               if (el) exportRefs.current[slide.id] = el;
               else delete exportRefs.current[slide.id];
             }}
-            style={{ width: cW, height: cH, position: "absolute", left: -99999, top: 0 }}
+            style={{
+              width: cW,
+              height: cH,
+              overflow: "hidden",
+              position: "absolute",
+              left: -99999,
+              top: 0,
+            }}
           >
-            <SlideCanvas
-              slide={slide}
-              device={state.device}
-              orientation={state.orientation}
-              theme={theme}
-              locale={exportLocaleOverride ?? state.locale}
-              appName={state.appName}
-              appIcon={state.appIcon}
-              hideEmpty
-            />
+            <div
+              style={{
+                position: "absolute",
+                left: -index * cW,
+                top: 0,
+                width: cW * currentSlides.length,
+                height: cH,
+              }}
+            >
+              <DeckCanvas
+                slides={currentSlides}
+                device={state.device}
+                orientation={state.orientation}
+                theme={theme}
+                locale={exportLocaleOverride ?? state.locale}
+                appName={state.appName}
+                appIcon={state.appIcon}
+                hideEmpty
+              />
+            </div>
           </div>
         ))}
       </div>

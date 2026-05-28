@@ -125,6 +125,7 @@ export const THEMES: Record<ThemeId, Theme> = {
 };
 
 export const STORAGE_KEY = "app-store-screenshots:project:v1";
+export const PROJECT_SCHEMA_VERSION = 2;
 
 export const DEVICE_LABEL: Record<Device, string> = {
   iphone: "iPhone",
