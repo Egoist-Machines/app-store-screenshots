@@ -138,16 +138,18 @@ project/
 │   ├── screenshots/        # iOS screenshots (locale folders optional)
 │   │   └── android/        # Android screenshots (when targeting both)
 │   └── screenshots-ipad/   # Optional iPad screenshots
+├── app-store-screenshots.json  # Git-trackable project state
 ├── src/app/
 │   ├── layout.tsx          # Font setup
-│   └── page.tsx            # Screenshot generator (single file)
+│   └── page.tsx            # Editor entry point
+├── src/components/editor/  # Connected canvas editor, inspector, export UI
 ├── package.json
 └── ...
 ```
 
 When targeting both stores, the skill uses a platform-based folder structure to keep iOS and Android screenshots separated.
 
-The entire generator is a **single `page.tsx` file**. Run the dev server, open the browser, click any screenshot to export it as a PNG.
+Run the dev server, open the browser, edit the connected canvas, then use **Export bundle** to download every required PNG size for the current device. The editor autosaves to `app-store-screenshots.json` so the deck can be committed and resumed later.
 
 The latest version of the skill also guides the agent to generate:
 
@@ -155,6 +157,7 @@ The latest version of the skill also guides the agent to generate:
 - reusable theme presets backed by design tokens
 - RTL-aware layouts for languages like Arabic and Hebrew
 - bulk export flows for locale/device/theme combinations
+- connected cross-screen compositions where devices or decorative elements can intentionally span adjacent screenshots
 
 ## Export sizes
 

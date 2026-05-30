@@ -1,13 +1,16 @@
 "use client";
 import * as React from "react";
 import { Rnd } from "react-rnd";
+import { RotateCw } from "lucide-react";
 import type {
+  BuiltInElementId,
   Device,
   ElementId,
   ElementTransform,
   Orientation,
   SelectedElement,
   Slide,
+  TextElement,
   Theme,
 } from "@/lib/types";
 import {
@@ -20,6 +23,7 @@ import {
   tabletLW,
   tabletPW,
 } from "@/lib/constants";
+import { toTextElementId } from "@/lib/elements";
 import { img } from "@/lib/image-cache";
 import { pickText, resolveScreenshot } from "@/lib/locale";
 import {
@@ -83,6 +87,7 @@ export function getFrameForDevice(device: Device, orientation: Orientation): {
 type EditHandlers = {
   onLabelChange?: (v: string) => void;
   onHeadlineChange?: (v: string) => void;
+  onTextElementTextChange?: (id: string, v: string) => void;
   onElementChange?: (id: ElementId, t: ElementTransform) => void;
   onSelectElement?: (id: ElementId | null) => void;
 };
@@ -108,6 +113,7 @@ type Props = {
 type DeckEditHandlers = {
   onLabelChange?: (slideId: string, v: string) => void;
   onHeadlineChange?: (slideId: string, v: string) => void;
+  onTextElementTextChange?: (slideId: string, id: string, v: string) => void;
   onElementChange?: (slideId: string, id: ElementId, t: ElementTransform) => void;
   onSelectElement?: (element: SelectedElement | null) => void;
   onSelectScreen?: (slideId: string) => void;
@@ -121,6 +127,7 @@ type DeckCanvasProps = {
   locale: string;
   appName?: string;
   appIcon?: string;
+  connectedCanvas?: boolean;
   editable?: boolean;
   edit?: DeckEditHandlers;
   selectedElement?: SelectedElement | null;
@@ -153,24 +160,16 @@ function EditableText({
   React.useEffect(() => {
     const el = ref.current;
     if (!el) return;
-    const incoming = multiline ? value.replace(/\n/g, "<br/>") : value;
-    if (el.innerHTML !== incoming && document.activeElement !== el) {
-      el.innerHTML = incoming || "";
+    const incoming = value || "";
+    if (el.textContent !== incoming && document.activeElement !== el) {
+      el.textContent = incoming;
     }
-  }, [value, multiline]);
+  }, [value]);
 
   const handleInput = (e: React.FormEvent<HTMLDivElement>) => {
     if (!onChange) return;
-    const html = (e.currentTarget.innerHTML || "")
-      .replace(/<div>/gi, "\n")
-      .replace(/<\/div>/gi, "")
-      .replace(/<br\s*\/?>/gi, "\n")
-      .replace(/<[^>]+>/g, "")
-      .replace(/&nbsp;/g, " ")
-      .replace(/&amp;/g, "&")
-      .replace(/&lt;/g, "<")
-      .replace(/&gt;/g, ">");
-    onChange(multiline ? html : html.replace(/\n/g, ""));
+    const text = (e.currentTarget.innerText || "").replace(/\u00a0/g, " ");
+    onChange(multiline ? text : text.replace(/\n/g, ""));
   };
 
   return (
@@ -181,6 +180,12 @@ function EditableText({
       data-placeholder={placeholder}
       onInput={handleInput}
       onFocus={() => onFocus?.()}
+      onKeyDown={(e) => {
+        if (!multiline && e.key === "Enter") {
+          e.preventDefault();
+          e.currentTarget.blur();
+        }
+      }}
       onMouseDown={(e) => {
         // Allow text editing without starting an Rnd drag.
         if (editable) {
@@ -428,7 +433,7 @@ function getDefaultRects(
 }
 
 function rectFor(
-  id: ElementId,
+  id: BuiltInElementId,
   slide: Slide,
   defaults: LayoutRects,
 ): (Rect & { align?: "center" | "left" }) | undefined {
@@ -453,6 +458,37 @@ function getSlideGeometry(slide: Slide, device: Device, orientation: Orientation
   const fwSmallFrac = smallWidthFn(cW, cH);
   const defaults = getDefaultRects(slide.layout, cW, cH, frameAspect, fwFrac, fwSmallFrac);
   return { cW, cH, Frame, frameAspect, defaults };
+}
+
+export function getElementTransform(
+  slide: Slide,
+  device: Device,
+  orientation: Orientation,
+  id: ElementId,
+): ElementTransform | undefined {
+  if (id.startsWith("text:")) {
+    const textId = id.slice("text:".length);
+    const textElement = slide.textElements?.find((element) => element.id === textId);
+    return textElement?.transform;
+  }
+  const { defaults } = getSlideGeometry(slide, device, orientation);
+  const rect = rectFor(id as BuiltInElementId, slide, defaults);
+  if (!rect) return undefined;
+  const saved = slide.transforms?.[id as BuiltInElementId];
+  return {
+    x: rect.x,
+    y: rect.y,
+    width: rect.width,
+    height: rect.height,
+    rotation: saved?.rotation ?? 0,
+    zIndex: saved?.zIndex ?? defaultElementZ(id as BuiltInElementId),
+  };
+}
+
+function defaultElementZ(id: BuiltInElementId): number {
+  if (id === "deviceSecondary") return 2;
+  if (id === "device") return 3;
+  return 4;
 }
 
 // ---------- Main single-screen canvas ----------
@@ -535,6 +571,7 @@ export function DeckCanvas({
   locale,
   appName,
   appIcon,
+  connectedCanvas = true,
   editable,
   edit,
   selectedElement = null,
@@ -623,6 +660,7 @@ export function DeckCanvas({
           ? {
               onLabelChange: (v) => edit?.onLabelChange?.(slide.id, v),
               onHeadlineChange: (v) => edit?.onHeadlineChange?.(slide.id, v),
+              onTextElementTextChange: (id, v) => edit?.onTextElementTextChange?.(slide.id, id, v),
               onElementChange: (id, t) => edit?.onElementChange?.(slide.id, id, t),
               onSelectElement: (id) => {
                 edit?.onSelectScreen?.(slide.id);
@@ -631,7 +669,7 @@ export function DeckCanvas({
             }
           : undefined;
 
-        return (
+        const elements = (
           <SlideElements
             key={`${slide.id}-elements`}
             slide={slide}
@@ -644,11 +682,27 @@ export function DeckCanvas({
             selectedElementId={selectedElementId}
             previewScale={previewScale}
             hideEmpty={hideEmpty}
-            screenX={index * cW}
-            boundsW={totalW}
+            screenX={connectedCanvas ? index * cW : 0}
+            boundsW={connectedCanvas ? totalW : cW}
             boundsH={cH}
-            allowCrossScreen
+            allowCrossScreen={connectedCanvas}
           />
+        );
+        if (connectedCanvas) return elements;
+        return (
+          <div
+            key={`${slide.id}-elements-isolated`}
+            style={{
+              position: "absolute",
+              left: index * cW,
+              top: 0,
+              width: cW,
+              height: cH,
+              overflow: "hidden",
+            }}
+          >
+            {elements}
+          </div>
         );
       })}
     </div>
@@ -897,8 +951,8 @@ function SlideElements({
             "caption",
             toLocal({
               ...t,
-              rotation,
-              zIndex,
+              rotation: t.rotation ?? rotation,
+              zIndex: t.zIndex ?? zIndex,
             }),
           )
         }
@@ -931,8 +985,8 @@ function SlideElements({
             id,
             toLocal({
               ...t,
-              rotation,
-              zIndex,
+              rotation: t.rotation ?? rotation,
+              zIndex: t.zIndex ?? zIndex,
             }),
           )
         }
@@ -951,6 +1005,73 @@ function SlideElements({
     );
   }
 
+  function renderTextElement(textElement: TextElement, index: number) {
+    const elementId = toTextElementId(textElement.id);
+    const rect = textElement.transform;
+    const rotation = rect.rotation ?? 0;
+    const zIndex = rect.zIndex ?? 5 + index;
+    const textColor = textElement.color || (inverted ? theme.fgAlt : theme.fg);
+    return (
+      <Movable
+        key={textElement.id}
+        rect={toGlobal(rect)}
+        boundsW={boundsW}
+        boundsH={boundsH}
+        editable={editable}
+        previewScale={previewScale}
+        rotation={rotation}
+        onChange={(t) =>
+          edit?.onElementChange?.(
+            elementId,
+            toLocal({
+              ...t,
+              rotation: t.rotation ?? rotation,
+              zIndex: t.zIndex ?? zIndex,
+            }),
+          )
+        }
+        zIndex={zIndex}
+        selected={selectedElementId === elementId}
+        onSelect={() => edit?.onSelectElement?.(elementId)}
+        allowOverflow={allowCrossScreen}
+      >
+        <div
+          style={{
+            width: "100%",
+            height: "100%",
+            display: "flex",
+            alignItems: "center",
+            justifyContent:
+              textElement.align === "right"
+                ? "flex-end"
+                : textElement.align === "left"
+                  ? "flex-start"
+                  : "center",
+            padding: `${Math.min(cW, cH) * 0.012}px`,
+          }}
+        >
+          <EditableText
+            value={pickText(textElement.text, locale)}
+            editable={editable}
+            multiline
+            onChange={(value) => edit?.onTextElementTextChange?.(textElement.id, value)}
+            onFocus={() => edit?.onSelectElement?.(elementId)}
+            placeholder="Text"
+            style={{
+              width: "100%",
+              color: textColor,
+              fontSize: textElement.fontSize ?? Math.min(cW, cH) * 0.06,
+              fontWeight: textElement.fontWeight ?? 700,
+              lineHeight: 1.05,
+              textAlign: textElement.align ?? "center",
+              textShadow: inverted ? "0 2px 18px rgba(0,0,0,0.22)" : "0 2px 18px rgba(255,255,255,0.2)",
+            }}
+          />
+        </div>
+      </Movable>
+    );
+  }
+
   return (
     <>
       {secondaryRect &&
@@ -962,6 +1083,7 @@ function SlideElements({
         )}
       {deviceRect && renderDevice("device", deviceRect, screenshot)}
       {renderCaption()}
+      {(slide.textElements || []).map(renderTextElement)}
     </>
   );
 }
@@ -1024,6 +1146,50 @@ function Movable({
   selected?: boolean;
   onSelect?: () => void;
 }) {
+  const rotationRef = React.useRef(rotation);
+  React.useEffect(() => {
+    rotationRef.current = rotation;
+  }, [rotation]);
+
+  function startRotate(e: React.PointerEvent<HTMLButtonElement>) {
+    e.preventDefault();
+    e.stopPropagation();
+    onSelect?.();
+
+    const root = e.currentTarget.closest(".rnd-editable") as HTMLElement | null;
+    if (!root) return;
+    const box = root.getBoundingClientRect();
+    const centerX = box.left + box.width / 2;
+    const centerY = box.top + box.height / 2;
+    const startAngle = pointerAngle(e.clientX, e.clientY, centerX, centerY);
+    const startRotation = rotationRef.current;
+
+    const handleMove = (event: PointerEvent) => {
+      event.preventDefault();
+      const nextRotation = normalizeRotation(
+        startRotation + pointerAngle(event.clientX, event.clientY, centerX, centerY) - startAngle,
+      );
+      rotationRef.current = nextRotation;
+      onChange({
+        x: display.x,
+        y: display.y,
+        width: display.width,
+        height: display.height,
+        rotation: nextRotation,
+        zIndex,
+      });
+    };
+    const stopRotate = () => {
+      window.removeEventListener("pointermove", handleMove);
+      window.removeEventListener("pointerup", stopRotate);
+      window.removeEventListener("pointercancel", stopRotate);
+    };
+
+    window.addEventListener("pointermove", handleMove, { passive: false });
+    window.addEventListener("pointerup", stopRotate, { once: true });
+    window.addEventListener("pointercancel", stopRotate, { once: true });
+  }
+
   // Rotation lives on the inner wrapper so the Rnd's axis-aligned rect remains
   // the authoritative bounding box for drag/resize math. A bare mousedown
   // listener (no stopPropagation — that would prevent react-rnd from starting
@@ -1063,6 +1229,7 @@ function Movable({
   }
 
   const display = clampRect(rect, boundsW, boundsH, allowOverflow);
+  const controlScale = Math.max(0.05, previewScale);
 
   return (
     <Rnd
@@ -1080,7 +1247,7 @@ function Movable({
           boundsH,
           allowOverflow,
         );
-        onChange(next);
+        onChange({ ...next, rotation, zIndex });
       }}
       onResizeStop={(_e, _dir, ref, _delta, position) => {
         const next = clampRect(
@@ -1094,15 +1261,41 @@ function Movable({
           boundsH,
           allowOverflow,
         );
-        onChange(next);
+        onChange({ ...next, rotation, zIndex });
       }}
       style={{ zIndex }}
       resizeHandleStyles={handleStyle}
       className={selected ? "rnd-editable rnd-selected" : "rnd-editable"}
     >
       {rotated}
+      <button
+        type="button"
+        className="rnd-rotate-handle"
+        style={{
+          right: -14 / controlScale,
+          top: -14 / controlScale,
+          width: 28 / controlScale,
+          height: 28 / controlScale,
+        }}
+        onPointerDown={startRotate}
+        title="Rotate"
+        aria-label="Rotate element"
+      >
+        <RotateCw style={{ width: 14 / controlScale, height: 14 / controlScale }} />
+      </button>
     </Rnd>
   );
+}
+
+function pointerAngle(x: number, y: number, centerX: number, centerY: number) {
+  return (Math.atan2(y - centerY, x - centerX) * 180) / Math.PI;
+}
+
+function normalizeRotation(degrees: number) {
+  let next = degrees;
+  while (next > 180) next -= 360;
+  while (next < -180) next += 360;
+  return Math.round(next);
 }
 
 // Subtle resize handles (visible only on hover via globals.css).

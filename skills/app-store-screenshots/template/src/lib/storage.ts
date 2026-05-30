@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { PROJECT_SCHEMA_VERSION, STORAGE_KEY } from "./constants";
 import { DEFAULT_PROJECT } from "./defaults";
 import { coerceLocalized } from "./locale";
-import type { Device, ElementTransform, ProjectState, Slide } from "./types";
+import type { Device, ElementTransform, ProjectState, Slide, TextElement } from "./types";
 
 const HISTORY_LIMIT = 50;
 // Coalesce rapid edits (typing, slider drags) into a single undo step.
@@ -30,6 +30,29 @@ function cleanTransform(value: unknown): ElementTransform | undefined {
   };
 }
 
+function cleanTextElement(value: unknown): TextElement | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const raw = value as Partial<TextElement>;
+  if (typeof raw.id !== "string" || !raw.id.trim()) return undefined;
+  const transform = cleanTransform(raw.transform);
+  if (!transform) return undefined;
+  return {
+    id: raw.id,
+    text: coerceLocalized(raw.text as unknown),
+    transform,
+    ...(typeof raw.fontSize === "number" && Number.isFinite(raw.fontSize)
+      ? { fontSize: raw.fontSize }
+      : {}),
+    ...(typeof raw.fontWeight === "number" && Number.isFinite(raw.fontWeight)
+      ? { fontWeight: raw.fontWeight }
+      : {}),
+    ...(typeof raw.color === "string" ? { color: raw.color } : {}),
+    ...(raw.align === "left" || raw.align === "center" || raw.align === "right"
+      ? { align: raw.align }
+      : {}),
+  };
+}
+
 // Migrate older projects into the connected-canvas schema. v1 projects stored
 // per-slide transforms inside the isolated screen bounds; v2 keeps that shape
 // and interprets coordinates outside a screen as intentional cross-screen art.
@@ -41,21 +64,37 @@ function migrateSlide(slide: Slide): Slide {
           .filter((entry): entry is [string, ElementTransform] => !!entry[1]),
       )
     : undefined;
+  const textElements = Array.isArray(slide.textElements)
+    ? slide.textElements.map(cleanTextElement).filter((t): t is TextElement => !!t)
+    : undefined;
 
   return {
     ...slide,
     label: coerceLocalized(slide.label as unknown),
     headline: coerceLocalized(slide.headline as unknown),
     ...(transforms && Object.keys(transforms).length > 0 ? { transforms } : { transforms: undefined }),
+    ...(textElements && textElements.length > 0 ? { textElements } : { textElements: undefined }),
   };
 }
 
 function mergeWithDefaults(parsed: Partial<ProjectState>): ProjectState {
+  const sourceSchemaVersion =
+    typeof parsed.schemaVersion === "number" && Number.isFinite(parsed.schemaVersion)
+      ? parsed.schemaVersion
+      : 1;
+  const connectedCanvas =
+    typeof parsed.connectedCanvas === "boolean"
+      ? parsed.connectedCanvas
+      : sourceSchemaVersion >= PROJECT_SCHEMA_VERSION;
+  const themeId =
+    typeof parsed.themeId === "string" && parsed.themeId.trim()
+      ? parsed.themeId
+      : DEFAULT_PROJECT.themeId;
   const slidesByDevice = parsed.slidesByDevice
     ? Object.fromEntries(
         Object.entries(parsed.slidesByDevice).map(([device, slides]) => [
           device,
-          (slides || []).map(migrateSlide),
+          Array.isArray(slides) ? slides.map((slide) => migrateSlide(slide as Slide)) : [],
         ]),
       )
     : {};
@@ -63,6 +102,8 @@ function mergeWithDefaults(parsed: Partial<ProjectState>): ProjectState {
     ...DEFAULT_PROJECT,
     ...parsed,
     schemaVersion: PROJECT_SCHEMA_VERSION,
+    themeId,
+    connectedCanvas,
     slidesByDevice: {
       ...DEFAULT_PROJECT.slidesByDevice,
       ...slidesByDevice,

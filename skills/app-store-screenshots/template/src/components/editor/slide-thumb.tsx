@@ -8,7 +8,7 @@ import { LAYOUT_LABEL } from "@/lib/constants";
 import { pickText } from "@/lib/locale";
 import type { Device, Orientation, Slide, Theme } from "@/lib/types";
 import { cn } from "@/lib/utils";
-import { DeckCanvas, getCanvas } from "./slide-canvas";
+import { DeckCanvas, SlideCanvas, getCanvas } from "./slide-canvas";
 
 type Props = {
   slide: Slide;
@@ -21,6 +21,7 @@ type Props = {
   locale: string;
   appName?: string;
   appIcon?: string;
+  connectedCanvas: boolean;
   onSelect: () => void;
   onDelete: () => void;
   onDuplicate: () => void;
@@ -40,6 +41,7 @@ export function SlideThumb({
   locale,
   appName,
   appIcon,
+  connectedCanvas,
   onSelect,
   onDelete,
   onDuplicate,
@@ -54,6 +56,9 @@ export function SlideThumb({
   const aspect = cW / cH;
   const tileH = Math.max(34, Math.min(120, Math.round(THUMB_W / aspect)));
   const scale = THUMB_W / cW;
+  const start = connectedCanvas ? Math.max(0, index - 1) : index;
+  const visibleSlides = connectedCanvas ? slides.slice(start, Math.min(slides.length, index + 2)) : [slide];
+  const localIndex = index - start;
 
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
@@ -92,26 +97,40 @@ export function SlideThumb({
         >
           <div
             style={{
-              width: cW * slides.length,
+              width: cW * visibleSlides.length,
               height: cH,
               position: "absolute",
               top: 0,
-              left: -index * cW,
+              left: -localIndex * cW * scale,
               transformOrigin: "top left",
               transform: `scale(${scale})`,
               pointerEvents: "none",
             }}
           >
-            <DeckCanvas
-              slides={slides}
-              device={device}
-              orientation={orientation}
-              theme={theme}
-              locale={locale}
-              appName={appName}
-              appIcon={appIcon}
-              editable={false}
-            />
+            {connectedCanvas ? (
+              <DeckCanvas
+                slides={visibleSlides}
+                device={device}
+                orientation={orientation}
+                theme={theme}
+                locale={locale}
+                appName={appName}
+                appIcon={appIcon}
+                connectedCanvas
+                editable={false}
+              />
+            ) : (
+              <SlideCanvas
+                slide={slide}
+                device={device}
+                orientation={orientation}
+                theme={theme}
+                locale={locale}
+                appName={appName}
+                appIcon={appIcon}
+                editable={false}
+              />
+            )}
           </div>
         </div>
         <div className="flex min-w-0 flex-1 flex-col">

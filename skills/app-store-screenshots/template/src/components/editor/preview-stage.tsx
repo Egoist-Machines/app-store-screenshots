@@ -1,5 +1,7 @@
 "use client";
 import * as React from "react";
+import { Maximize2, ZoomIn, ZoomOut } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { DEVICE_LABEL, LAYOUT_LABEL } from "@/lib/constants";
 import type {
   Device,
@@ -21,10 +23,12 @@ type Props = {
   locale: string;
   appName?: string;
   appIcon?: string;
+  connectedCanvas: boolean;
   selectedElement: SelectedElement | null;
   onActiveSlideChange: (id: string) => void;
   onLabelChange: (slide: Slide, v: string) => void;
   onHeadlineChange: (slide: Slide, v: string) => void;
+  onTextElementTextChange: (slideId: string, id: string, v: string) => void;
   onElementChange: (slideId: string, id: ElementId, t: ElementTransform) => void;
   onSelectElement: (element: SelectedElement | null) => void;
 };
@@ -40,18 +44,22 @@ export function PreviewStage({
   locale,
   appName,
   appIcon,
+  connectedCanvas,
   selectedElement,
   onActiveSlideChange,
   onLabelChange,
   onHeadlineChange,
+  onTextElementTextChange,
   onElementChange,
   onSelectElement,
 }: Props) {
   const containerRef = React.useRef<HTMLDivElement>(null);
   const scrollerRef = React.useRef<HTMLDivElement>(null);
-  const [scale, setScale] = React.useState(0.2);
+  const [fitScale, setFitScale] = React.useState(0.2);
+  const [zoom, setZoom] = React.useState(1);
   const { cW, cH } = getCanvas(device, orientation);
   const totalW = Math.max(1, slides.length) * cW;
+  const scale = fitScale * zoom;
   const activeIndex = Math.max(0, slides.findIndex((slide) => slide.id === activeSlideId));
   const activeSlide = slides[activeIndex] || slides[0] || null;
 
@@ -62,13 +70,17 @@ export function PreviewStage({
       const rect = el.getBoundingClientRect();
       const sx = (rect.width - 96) / cW;
       const sy = (rect.height - 96) / cH;
-      setScale(Math.max(0.05, Math.min(sx, sy)));
+      setFitScale(Math.max(0.05, Math.min(sx, sy)));
     };
     update();
     const ro = new ResizeObserver(update);
     ro.observe(el);
     return () => ro.disconnect();
   }, [cW, cH]);
+
+  React.useEffect(() => {
+    setZoom(1);
+  }, [device, orientation]);
 
   React.useEffect(() => {
     const scroller = scrollerRef.current;
@@ -110,6 +122,7 @@ export function PreviewStage({
               locale={locale}
               appName={appName}
               appIcon={appIcon}
+              connectedCanvas={connectedCanvas}
               editable
               previewScale={scale}
               selectedElement={selectedElement}
@@ -124,6 +137,7 @@ export function PreviewStage({
                   const slide = slides.find((s) => s.id === slideId);
                   if (slide) onHeadlineChange(slide, value);
                 },
+                onTextElementTextChange,
                 onElementChange,
                 onSelectElement,
                 onSelectScreen: onActiveSlideChange,
@@ -149,12 +163,53 @@ export function PreviewStage({
             <span>landscape</span>
           </>
         )}
+        {!connectedCanvas && (
+          <>
+            <span aria-hidden>·</span>
+            <span>isolated</span>
+          </>
+        )}
       </div>
 
-      <div className="pointer-events-none absolute bottom-4 right-4 flex items-center gap-1.5 rounded-md bg-background/80 px-2 py-1 text-[10px] tabular-nums text-muted-foreground shadow-sm backdrop-blur">
-        <span>{slides.length}× {cW}×{cH}</span>
-        <span aria-hidden>·</span>
-        <span>{(scale * 100).toFixed(0)}%</span>
+      <div className="absolute bottom-4 right-4 flex items-center gap-1.5 rounded-md bg-background/85 px-1.5 py-1 text-[10px] tabular-nums text-muted-foreground shadow-sm backdrop-blur">
+        <span className="px-1">{slides.length}× {cW}×{cH}</span>
+        <span aria-hidden className="text-border">|</span>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="h-6 w-6"
+          onClick={() => setZoom((value) => Math.max(0.25, Number((value - 0.1).toFixed(2))))}
+          disabled={zoom <= 0.25}
+          title="Zoom out"
+          aria-label="Zoom out"
+        >
+          <ZoomOut className="h-3.5 w-3.5" />
+        </Button>
+        <span className="min-w-10 text-center">{(scale * 100).toFixed(0)}%</span>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="h-6 w-6"
+          onClick={() => setZoom((value) => Math.min(2, Number((value + 0.1).toFixed(2))))}
+          disabled={zoom >= 2}
+          title="Zoom in"
+          aria-label="Zoom in"
+        >
+          <ZoomIn className="h-3.5 w-3.5" />
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="h-6 w-6"
+          onClick={() => setZoom(1)}
+          title="Fit active screen"
+          aria-label="Fit active screen"
+        >
+          <Maximize2 className="h-3.5 w-3.5" />
+        </Button>
       </div>
     </div>
   );

@@ -5,14 +5,23 @@ import { toPng } from "html-to-image";
 import { Toaster, toast } from "sonner";
 import {
   getExportSizes,
+  hasTheme,
   supportsLandscape,
-  THEMES,
+  themeById,
 } from "@/lib/constants";
 import { detectPlatform, nid } from "@/lib/defaults";
+import { isBuiltInElementId, isTextElementId, textElementKey } from "@/lib/elements";
 import { preloadImages } from "@/lib/image-cache";
 import { resolveScreenshot, writeLocalized } from "@/lib/locale";
 import { useProject } from "@/lib/storage";
-import type { Device, ElementId, ElementTransform, SelectedElement, Slide } from "@/lib/types";
+import type {
+  BuiltInElementId,
+  Device,
+  ElementId,
+  ElementTransform,
+  SelectedElement,
+  Slide,
+} from "@/lib/types";
 import { Inspector } from "./inspector";
 import { PreviewStage } from "./preview-stage";
 import { Sidebar } from "./sidebar";
@@ -26,12 +35,13 @@ export function ScreenshotEditor() {
   const [exporting, setExporting] = React.useState<string | null>(null);
   const [ready, setReady] = React.useState(false);
   const [exportLocaleOverride, setExportLocaleOverride] = React.useState<string | null>(null);
-  const exportRefs = React.useRef<Record<string, HTMLDivElement | null>>({});
+  const [exportSlideIndex, setExportSlideIndex] = React.useState(0);
+  const exportRef = React.useRef<HTMLDivElement | null>(null);
 
   const currentSlides = state.slidesByDevice[state.device] || [];
   const activeSlide =
     currentSlides.find((s) => s.id === activeSlideId) || currentSlides[0] || null;
-  const theme = THEMES[state.themeId];
+  const theme = themeById(state.themeId);
 
   React.useEffect(() => {
     if (selectedElement && selectedElement.slideId !== activeSlide?.id) {
@@ -51,6 +61,15 @@ export function ScreenshotEditor() {
       setState((p) => ({ ...p, orientation: "portrait" }));
     }
   }, [state.device, state.orientation, setState]);
+
+  React.useEffect(() => {
+    if (hydrated && state.themeId && !hasTheme(state.themeId)) {
+      toast.warning("Using fallback theme", {
+        description: `Theme "${state.themeId}" is not defined in src/lib/constants.ts.`,
+        duration: 8000,
+      });
+    }
+  }, [hydrated, state.themeId]);
 
   const assetPaths = React.useMemo(() => {
     const paths = new Set<string>();
@@ -134,7 +153,6 @@ export function ScreenshotEditor() {
         };
       });
       setActiveSlideId((cur) => (cur === id ? fallback?.id || null : cur));
-      delete exportRefs.current[id];
 
       toast("Screen deleted", {
         action: {
@@ -187,14 +205,47 @@ export function ScreenshotEditor() {
         ...prev,
         slidesByDevice: {
           ...prev.slidesByDevice,
+          [prev.device]: (prev.slidesByDevice[prev.device] || []).map((slide) => {
+            if (slide.id !== slideId) return slide;
+            if (isTextElementId(elementId)) {
+              const textId = textElementKey(elementId);
+              return {
+                ...slide,
+                textElements: (slide.textElements || []).map((element) =>
+                  element.id === textId ? { ...element, transform } : element,
+                ),
+              };
+            }
+            if (!isBuiltInElementId(elementId)) return slide;
+            return {
+              ...slide,
+              transforms: {
+                ...(slide.transforms || {}),
+                [elementId]: transform,
+              } as Partial<Record<BuiltInElementId, ElementTransform>>,
+            };
+          }),
+        },
+      }));
+    },
+    [setState],
+  );
+
+  const patchTextElementText = React.useCallback(
+    (slideId: string, textId: string, value: string) => {
+      setState((prev) => ({
+        ...prev,
+        slidesByDevice: {
+          ...prev.slidesByDevice,
           [prev.device]: (prev.slidesByDevice[prev.device] || []).map((slide) =>
             slide.id === slideId
               ? {
                   ...slide,
-                  transforms: {
-                    ...(slide.transforms || {}),
-                    [elementId]: transform,
-                  },
+                  textElements: (slide.textElements || []).map((element) =>
+                    element.id === textId
+                      ? { ...element, text: writeLocalized(element.text, prev.locale, value) }
+                      : element,
+                  ),
                 }
               : slide,
           ),
@@ -213,7 +264,23 @@ export function ScreenshotEditor() {
         if (idx === -1) return prev;
         const src = slides[idx];
         newId = nid();
-        const copy: Slide = { ...src, id: newId };
+        const copy: Slide = {
+          ...src,
+          id: newId,
+          label: { ...src.label },
+          headline: { ...src.headline },
+          transforms: src.transforms
+            ? Object.fromEntries(
+                Object.entries(src.transforms).map(([key, value]) => [key, { ...value }]),
+              )
+            : undefined,
+          textElements: src.textElements?.map((element) => ({
+            ...element,
+            id: nid(),
+            text: { ...element.text },
+            transform: { ...element.transform },
+          })),
+        };
         const next = [...slides.slice(0, idx + 1), copy, ...slides.slice(idx + 1)];
         return {
           ...prev,
@@ -237,8 +304,16 @@ export function ScreenshotEditor() {
           (target as HTMLElement).isContentEditable);
       if (exporting) return;
 
-      // Undo / redo and deselect work everywhere (including inside text
-      // fields) so the shortcuts feel native.
+      if (e.key === "Escape") {
+        setSelectedElement(null);
+        if (target && "blur" in target && typeof target.blur === "function") target.blur();
+        return;
+      }
+
+      // Let focused inputs and contenteditable text keep their native undo,
+      // redo, selection, and deletion behavior.
+      if (inEditable) return;
+
       if ((e.metaKey || e.ctrlKey) && (e.key === "z" || e.key === "Z")) {
         e.preventDefault();
         if (e.shiftKey) redo();
@@ -250,13 +325,6 @@ export function ScreenshotEditor() {
         redo();
         return;
       }
-      if (e.key === "Escape") {
-        setSelectedElement(null);
-        if (target && "blur" in target && typeof target.blur === "function") target.blur();
-        return;
-      }
-
-      if (inEditable) return;
       if (!currentSlides.length) return;
       const idx = activeSlide ? currentSlides.findIndex((s) => s.id === activeSlide.id) : -1;
       if (e.key === "ArrowDown" || (e.key === "j" && !e.metaKey && !e.ctrlKey)) {
@@ -306,6 +374,33 @@ export function ScreenshotEditor() {
     }
     const locales = state.locales;
 
+    const missingScreens = currentSlides
+      .map((slide, index) => ({ slide, index }))
+      .filter(({ slide }) => slideNeedsScreenshot(state.device, slide) && !slide.screenshot);
+    const reusedBackScreens = currentSlides
+      .map((slide, index) => ({ slide, index }))
+      .filter(
+        ({ slide }) =>
+          state.device !== "feature-graphic" &&
+          slide.layout === "two-devices" &&
+          slide.screenshot &&
+          !slide.screenshotSecondary,
+      );
+    if (missingScreens.length > 0 || reusedBackScreens.length > 0) {
+      const details = [
+        missingScreens.length
+          ? `${missingScreens.length} screen${missingScreens.length === 1 ? "" : "s"} will export with an empty device.`
+          : null,
+        reusedBackScreens.length
+          ? `${reusedBackScreens.length} two-device screen${reusedBackScreens.length === 1 ? "" : "s"} will reuse the primary screenshot in back.`
+          : null,
+      ].filter(Boolean);
+      toast.warning("Export includes placeholder screenshots", {
+        description: details.join(" "),
+        duration: 7000,
+      });
+    }
+
     // Make sure custom fonts are loaded before snapshot so typography in PNG
     // matches what's on screen.
     if (typeof document !== "undefined" && document.fonts && document.fonts.ready) {
@@ -338,7 +433,9 @@ export function ScreenshotEditor() {
           const slide = currentSlides[i];
           unit += 1;
           setExporting(`${unit}/${totalUnits}`);
-          const el = exportRefs.current[slide.id];
+          setExportSlideIndex(i);
+          await waitForPaint();
+          const el = exportRef.current;
           if (!el) {
             failed += 1;
             errors.push(`${locale} ${size.w}×${size.h} screen ${i + 1}: render target missing`);
@@ -452,6 +549,8 @@ export function ScreenshotEditor() {
       <Toolbar
         appName={state.appName}
         setAppName={(v) => setState((p) => ({ ...p, appName: v }))}
+        connectedCanvas={state.connectedCanvas}
+        setConnectedCanvas={(v) => setState((p) => ({ ...p, connectedCanvas: v }))}
         locale={state.locale}
         setLocale={(v) => setState((p) => ({ ...p, locale: v }))}
         locales={state.locales}
@@ -463,7 +562,7 @@ export function ScreenshotEditor() {
         onResetAll={() => {
           reset();
           setActiveSlideId(null);
-        toast.success("Reset all devices to defaults");
+          toast.success("Reset all devices to defaults");
         }}
         onResetDevice={() => {
           resetDevice(state.device);
@@ -487,6 +586,7 @@ export function ScreenshotEditor() {
             locale={state.locale}
             appName={state.appName}
             appIcon={state.appIcon}
+            connectedCanvas={state.connectedCanvas}
             disabled={busy}
             onReorder={reorderSlides}
             onSelect={setActiveSlideId}
@@ -507,10 +607,12 @@ export function ScreenshotEditor() {
               locale={state.locale}
               appName={state.appName}
               appIcon={state.appIcon}
+              connectedCanvas={state.connectedCanvas}
               selectedElement={selectedElement}
               onActiveSlideChange={setActiveSlideId}
               onLabelChange={(slide, v) => patchLocalized(slide, "label", v)}
               onHeadlineChange={(slide, v) => patchLocalized(slide, "headline", v)}
+              onTextElementTextChange={patchTextElementText}
               onElementChange={patchElementTransform}
               onSelectElement={setSelectedElement}
             />
@@ -526,11 +628,18 @@ export function ScreenshotEditor() {
           {activeSlide ? (
             <Inspector
               slide={activeSlide}
+              device={state.device}
+              orientation={state.orientation}
               locale={state.locale}
               selectedElementId={
                 selectedElement?.slideId === activeSlide.id ? selectedElement.elementId : null
               }
               onChange={(patch) => patchSlide(activeSlide.id, patch)}
+              onSelectElement={(elementId) =>
+                setSelectedElement(
+                  elementId ? { slideId: activeSlide.id, elementId } : null,
+                )
+              }
             />
           ) : (
             <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center text-sm text-muted-foreground">
@@ -551,13 +660,9 @@ export function ScreenshotEditor() {
           pointerEvents: "none",
         }}
       >
-        {currentSlides.map((slide, index) => (
+        {currentSlides.length > 0 && (
           <div
-            key={slide.id}
-            ref={(el) => {
-              if (el) exportRefs.current[slide.id] = el;
-              else delete exportRefs.current[slide.id];
-            }}
+            ref={exportRef}
             style={{
               width: cW,
               height: cH,
@@ -570,7 +675,7 @@ export function ScreenshotEditor() {
             <div
               style={{
                 position: "absolute",
-                left: -index * cW,
+                left: -exportSlideIndex * cW,
                 top: 0,
                 width: cW * currentSlides.length,
                 height: cH,
@@ -584,11 +689,12 @@ export function ScreenshotEditor() {
                 locale={exportLocaleOverride ?? state.locale}
                 appName={state.appName}
                 appIcon={state.appIcon}
+                connectedCanvas={state.connectedCanvas}
                 hideEmpty
               />
             </div>
           </div>
-        ))}
+        )}
       </div>
     </div>
   );
@@ -601,6 +707,11 @@ function slugify(s: string) {
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/(^-|-$)/g, "") || "screenshots"
   );
+}
+
+function slideNeedsScreenshot(device: Device, slide: Slide) {
+  if (device === "feature-graphic") return false;
+  return slide.layout !== "no-device" && slide.layout !== "feature-graphic";
 }
 
 function stamp() {
