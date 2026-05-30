@@ -84,6 +84,8 @@ Migration rules:
 6. **Keep screenshots pointed at existing files.** Do not rename screenshot files unless the old project already depended on numeric names and the migration needs them. Existing static paths are fine.
 7. **Handle custom themes without asking.** If the old project references a custom `themeId`, merge the matching theme object into the new `src/lib/constants.ts` when it can be found. If it cannot be recovered, leave the `themeId` in project JSON; the editor will fall back to `clean-light` and warn, and you should note that a custom theme needs manual restoration.
 8. **Merge package metadata when possible.** The template's dependencies and scripts must win for the screenshot editor, but preserve unrelated existing `dependencies`, `devDependencies`, and useful scripts unless they directly conflict.
+9. **Do not import template sample decks into real migrations.** If the old project already has decks or screenshots, use the template for UI/code only. Keep template sample screenshots/decks out of the migrated project so the user's app does not inherit unrelated example content.
+10. **Use a disposable copy for dogfooding.** If the user asks to test or review the migration instead of actually migrating their project, copy the app to a temp directory or worktree and run the migration there. Only touch the real checkout when the user explicitly asks for the real migration and answers **Yes**.
 
 Recommended migration sequence:
 
@@ -108,8 +110,13 @@ cp app-store-screenshots.json "$BACKUP_DIR/template-app-store-screenshots.json" 
 # 4. Restore preserved user state/assets over template samples.
 cp "$PRESERVE_DIR/app-store-screenshots.json" app-store-screenshots.json 2>/dev/null || true
 mkdir -p public
-mkdir -p public/screenshots
-cp -R "$PRESERVE_DIR/screenshots/." public/screenshots/ 2>/dev/null || true
+if [ -d "$PRESERVE_DIR/screenshots" ]; then
+  mkdir -p "$BACKUP_DIR/template-samples/public"
+  mv public/screenshots "$BACKUP_DIR/template-samples/public/screenshots" 2>/dev/null || true
+  cp -R "$PRESERVE_DIR/screenshots" public/screenshots
+else
+  mkdir -p public/screenshots
+fi
 cp "$PRESERVE_DIR/app-icon.png" public/app-icon.png 2>/dev/null || true
 ```
 
@@ -140,13 +147,15 @@ const templateState =
   readJson(PROJECT_FILE) ||
   {};
 const existingState = readJson(PROJECT_FILE) || {};
+const existingDecks =
+  existingState.slidesByDevice && typeof existingState.slidesByDevice === "object"
+    ? existingState.slidesByDevice
+    : {};
+const hasExistingDecks = Object.keys(existingDecks).length > 0;
 const state = {
   ...templateState,
   ...existingState,
-  slidesByDevice: {
-    ...(templateState.slidesByDevice || {}),
-    ...(existingState.slidesByDevice || {}),
-  },
+  slidesByDevice: hasExistingDecks ? existingDecks : templateState.slidesByDevice || {},
 };
 
 const legacySlides =
@@ -155,9 +164,8 @@ const legacySlides =
   Array.isArray(existingState.features) ? existingState.features :
   null;
 
-if (legacySlides && (!existingState.slidesByDevice || !Object.keys(existingState.slidesByDevice).length)) {
+if (legacySlides && !hasExistingDecks) {
   state.slidesByDevice = {
-    ...(templateState.slidesByDevice || {}),
     iphone: legacySlides,
   };
 }
@@ -224,12 +232,18 @@ state.schemaVersion = 2;
 state.connectedCanvas = true;
 state.locales = Array.isArray(state.locales) && state.locales.length ? state.locales : [DEFAULT_LOCALE];
 state.locale = state.locales.includes(state.locale) ? state.locale : state.locales[0];
+state.device = DEVICE_KEYS.includes(state.device) ? state.device : "iphone";
 
 if (state.slidesByDevice && typeof state.slidesByDevice === "object") {
   for (const [device, slides] of Object.entries(state.slidesByDevice)) {
     if (!DEVICE_KEYS.includes(device)) continue;
     state.slidesByDevice[device] = Array.isArray(slides) ? slides.map(migrateSlide).filter(Boolean) : [];
   }
+}
+
+if (!state.slidesByDevice[state.device]) {
+  const firstDeviceWithSlides = DEVICE_KEYS.find((device) => state.slidesByDevice[device]?.length);
+  if (firstDeviceWithSlides) state.device = firstDeviceWithSlides;
 }
 
 fs.writeFileSync(PROJECT_FILE, JSON.stringify(state, null, 2) + "\n");
@@ -281,13 +295,16 @@ Then install/update dependencies and verify:
 
 ```bash
 bun install      # or pnpm install / yarn / npm install
-bun run build    # or the detected package-manager equivalent
+set -o pipefail
+bun run build 2>&1 | tee "$BACKUP_DIR/build.log"    # or the detected package-manager equivalent
 ```
 
 Start the dev server and verify in the browser:
 
 - The toolbar shows **Connected** enabled.
 - Existing screens, copy, screenshot paths, and app icon are present.
+- Referenced screenshot files exist for every configured locale, or the final report lists the missing paths.
+- Device decks retained from the old project do not silently become template placeholders. If a retained deck has empty screenshots or lacks active-locale copy, report it as a follow-up instead of removing it.
 - A bundle export succeeds for the active device.
 - `app-store-screenshots.json` contains `"schemaVersion": 2` and `"connectedCanvas": true`.
 
@@ -308,7 +325,7 @@ Ask the user these. Do not proceed until you have answers:
 2. **App icon** — "Where is your app icon PNG?"
 3. **App name** — "What's the app called?"
 4. **Feature list** — "List your app's features in priority order. What's the #1 thing your app does?"
-5. **Style direction** — "What style do you want? You can either (a) pick one of the named deep-spec styles, or (b) describe your own vibe in your own words (warm/organic, dark/moody, clean/minimal, bold/colorful, plus any reference apps you like) and I'll build a custom palette. The template also ships with `clean-light`, `dark-bold`, `warm-editorial`, and `ocean-fresh` palette presets you can start from. The named deep specs live in `style-prompts/` — see `style-prompts.md` for the full index. Currently available: Retro Rubberhose Mascot, Moody Curated Dating, Paper Sticker Skeuomorphic, Dreamy Pastel Couples, Hand-Drawn Editorial Tasks, Glossy 3D K-Beauty Creator. If the user names one of these — or describes something that clearly matches one — read `style-prompts/_QUALITY_BAR.md` first, then the matching deep spec file, and apply its entire spec (palette, gradients, shadows, rotations, per-slide breakdown). If the user describes a fully custom style, fall back to the General Visual Design Principles below and pick the closest deep spec as a starting reference."
+5. **Style direction** — "What style do you want? You can either (a) pick one of the named deep-spec styles, or (b) describe your own vibe in your own words (warm/organic, dark/moody, clean/minimal, bold/colorful, plus any reference apps you like) and I'll build a custom palette. The template also ships with `clean-light`, `dark-bold`, `warm-editorial`, `ocean-fresh`, and `bloom-roast` palette presets you can start from. The named deep specs live in `style-prompts/` — see `style-prompts.md` for the full index. Currently available: Retro Rubberhose Mascot, Moody Curated Dating, Paper Sticker Skeuomorphic, Dreamy Pastel Couples, Hand-Drawn Editorial Tasks, Glossy 3D K-Beauty Creator. If the user names one of these — or describes something that clearly matches one — read `style-prompts/_QUALITY_BAR.md` first, then the matching deep spec file, and apply its entire spec (palette, gradients, shadows, rotations, per-slide breakdown). If the user describes a fully custom style, fall back to the General Visual Design Principles below and pick the closest deep spec as a starting reference."
 
 ### Optional
 
@@ -317,7 +334,7 @@ Ask the user these. Do not proceed until you have answers:
 8. **Feature Graphic** — Want a 1024×500 Play Store banner too?
 9. **Localized screenshots** — Languages? (e.g. en, de, es, pt, ja, ar, he)
 10. **Number of slides** — Apple allows up to 10, Google Play up to 8.
-11. **Brand colors / font** — If they want a custom theme beyond the four presets.
+11. **Brand colors / font** — If they want a custom theme beyond the built-in presets.
 12. **Additional instructions** — Anything specific.
 
 **IMPORTANT:** If the user gives instructions at any point, follow them. They override skill defaults.
@@ -548,7 +565,7 @@ The project state file (`app-store-screenshots.json`) carries a `locales: string
 
 **After scaffolding, edit `app-store-screenshots.json` to set `locales` to the user's chosen list, e.g.** `"locales": ["en", "de", "ja"]`. Also set `"locale": "en"` (or whichever is the source-of-truth language) so the editor opens on it.
 
-The editor stores headlines and labels per-locale on each slide — switch to a locale and type to fill it in; unfilled locales fall back to `en` at preview time. Screenshots are a single string per slide; put `{locale}` anywhere in the path and the editor substitutes the active locale at render and export (e.g. `/screenshots/iphone/{locale}/01.png`).
+The editor stores headlines and labels per-locale on each slide — switch to a locale and type to fill it in; unfilled locales fall back to `en` at preview time. Screenshots are a single string per slide; put `{locale}` anywhere in the path and the editor substitutes the active locale at render and export (e.g. `/screenshots/apple/iphone/{locale}/01.png`).
 
 - Don't literally translate — rewrite for the target market.
 - Re-check line breaks per locale; German/French/Portuguese often need shorter claims.
