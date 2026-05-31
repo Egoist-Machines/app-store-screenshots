@@ -53,9 +53,8 @@ function cleanTextElement(value: unknown): TextElement | undefined {
   };
 }
 
-// Migrate older projects into the connected-canvas schema. v1 projects stored
-// per-slide transforms inside the isolated screen bounds; v2 keeps that shape
-// and interprets coordinates outside a screen as intentional cross-screen art.
+// Migrate older projects into the current schema while keeping legacy decks
+// visually stable until they explicitly opt into connected canvas.
 function migrateSlide(slide: Slide): Slide {
   const transforms = slide.transforms
     ? Object.fromEntries(
@@ -78,14 +77,10 @@ function migrateSlide(slide: Slide): Slide {
 }
 
 function mergeWithDefaults(parsed: Partial<ProjectState>): ProjectState {
-  const sourceSchemaVersion =
-    typeof parsed.schemaVersion === "number" && Number.isFinite(parsed.schemaVersion)
-      ? parsed.schemaVersion
-      : 1;
   const connectedCanvas =
     typeof parsed.connectedCanvas === "boolean"
       ? parsed.connectedCanvas
-      : sourceSchemaVersion >= PROJECT_SCHEMA_VERSION;
+      : false;
   const themeId =
     typeof parsed.themeId === "string" && parsed.themeId.trim()
       ? parsed.themeId
@@ -131,16 +126,19 @@ function loadFromLocalStorage(): ProjectState | null {
   }
 }
 
-async function loadFromFile(): Promise<ProjectState | null> {
-  if (typeof window === "undefined") return null;
+async function loadFromFile(): Promise<
+  { ok: true; state: ProjectState | null } | { ok: false; error: string }
+> {
+  if (typeof window === "undefined") return { ok: false, error: "Window is not available" };
   try {
     const resp = await fetch("/api/project", { cache: "no-store" });
-    if (!resp.ok) return null;
+    if (!resp.ok) return { ok: false, error: `HTTP ${resp.status}` };
     const json = (await resp.json()) as { ok: boolean; state: Partial<ProjectState> | null };
-    if (!json.ok || !json.state) return null;
-    return mergeWithDefaults(json.state);
+    if (!json.ok) return { ok: false, error: "Project response was not ok" };
+    if (!json.state) return { ok: true, state: null };
+    return { ok: true, state: mergeWithDefaults(json.state) };
   } catch {
-    return null;
+    return { ok: false, error: "Project file could not be loaded" };
   }
 }
 
@@ -183,6 +181,7 @@ function applyUpdater(updater: Updater, prev: ProjectState): ProjectState {
 export function useProject() {
   const [state, _setState] = useState<ProjectState>(DEFAULT_PROJECT);
   const [hydrated, setHydrated] = useState(false);
+  const [fileReady, setFileReady] = useState(false);
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -203,8 +202,16 @@ export function useProject() {
     void (async () => {
       const fromFile = await loadFromFile();
       if (cancelled) return;
-      if (fromFile) {
-        _setState(fromFile);
+      if (fromFile.ok) {
+        if (fromFile.state) {
+          _setState(fromFile.state);
+        } else {
+          _setState(DEFAULT_PROJECT);
+        }
+        setFileReady(true);
+      } else {
+        setFileReady(false);
+        setSaveError(fromFile.error);
       }
       pastRef.current = [];
       futureRef.current = [];
@@ -219,7 +226,7 @@ export function useProject() {
 
   // Debounced autosave to BOTH localStorage (fast, offline) and file (git-trackable).
   useEffect(() => {
-    if (!hydrated) return;
+    if (!hydrated || !fileReady) return;
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(() => {
       const localResult = saveToLocalStorage(state);
@@ -242,7 +249,7 @@ export function useProject() {
     return () => {
       if (timer.current) clearTimeout(timer.current);
     };
-  }, [state, hydrated]);
+  }, [state, hydrated, fileReady]);
 
   const setState = useCallback((updater: Updater) => {
     _setState((prev) => {

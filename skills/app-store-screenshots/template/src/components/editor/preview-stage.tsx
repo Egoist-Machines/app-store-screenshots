@@ -55,6 +55,7 @@ export function PreviewStage({
 }: Props) {
   const containerRef = React.useRef<HTMLDivElement>(null);
   const scrollerRef = React.useRef<HTMLDivElement>(null);
+  const suppressNextActiveScreenPanRef = React.useRef(false);
   const [fitScale, setFitScale] = React.useState(0.2);
   const [zoom, setZoom] = React.useState(1);
   const { cW, cH } = getCanvas(device, orientation);
@@ -83,6 +84,11 @@ export function PreviewStage({
   }, [device, orientation]);
 
   React.useEffect(() => {
+    if (suppressNextActiveScreenPanRef.current) {
+      suppressNextActiveScreenPanRef.current = false;
+      return;
+    }
+
     const scroller = scrollerRef.current;
     if (!scroller || !activeSlide) return;
     const screenLeft = activeIndex * cW * scale;
@@ -90,6 +96,16 @@ export function PreviewStage({
     const targetLeft = Math.max(0, screenLeft - (scroller.clientWidth - screenWidth) / 2);
     scroller.scrollTo({ left: targetLeft, behavior: "smooth" });
   }, [activeIndex, activeSlide, cW, scale]);
+
+  const handleCanvasActiveSlideChange = React.useCallback(
+    (id: string) => {
+      if (id !== activeSlideId) {
+        suppressNextActiveScreenPanRef.current = true;
+      }
+      onActiveSlideChange(id);
+    },
+    [activeSlideId, onActiveSlideChange],
+  );
 
   return (
     <div
@@ -140,7 +156,7 @@ export function PreviewStage({
                 onTextElementTextChange,
                 onElementChange,
                 onSelectElement,
-                onSelectScreen: onActiveSlideChange,
+                onSelectScreen: handleCanvasActiveSlideChange,
               }}
             />
           </div>

@@ -17,7 +17,7 @@ Scaffold a pre-built Next.js + ShadCN editor that lets the user design and expor
 - Easy iOS ↔ Android platform switch — separate slide decks live side by side
 - One-click bulk PNG export at every Apple/Google-required resolution via `html-to-image`
 - Light/dark variant toggle per slide, theme presets, locale select
-- Guided in-place migration for older projects created by this skill; passive runtime migration keeps legacy decks isolated, while an explicit skill-run migration opts them into connected canvas
+- Guided in-place migration for older projects created by this skill; passive and explicit migrations keep legacy decks isolated until the user intentionally opts into connected canvas
 
 Supported devices out of the box:
 - **iPhone** (portrait) — Apple App Store
@@ -72,7 +72,7 @@ If the user chooses **Yes**, do **not** ask the Step 1 questionnaire. Run the mi
 
 ### Migration Path (When User Says Yes)
 
-The goal is an in-place UI/template upgrade, not a redesign. Preserve the user's existing app name, copy, screenshot paths, app icon, uploaded assets, locales, and device decks wherever they already exist. Replace the old UI implementation with the current template. Force the migrated project into the new connected-canvas experience by writing `"connectedCanvas": true`.
+The goal is an in-place UI/template upgrade, not a redesign. Preserve the user's existing app name, copy, screenshot paths, app icon, uploaded assets, locales, and device decks wherever they already exist. Replace the old UI implementation with the current template. Keep legacy decks in isolated export mode unless the project already explicitly opted into connected canvas.
 
 Migration rules:
 
@@ -80,7 +80,7 @@ Migration rules:
 2. **Never delete user assets.** Preserve `public/screenshots/`, `public/app-icon.png`, uploaded screenshots, and any existing `app-store-screenshots.json`.
 3. **Preserve recoverability.** If the worktree is not clean, do not revert unrelated changes. Before overwriting template files, copy replaced project-state/assets/code snapshots to a temporary backup outside the repo (for example `/tmp/app-store-screenshots-migration-<timestamp>/`) and mention the path in the final response.
 4. **Prefer structured migration.** Read and write `app-store-screenshots.json` with JSON tooling. Do not regex-edit JSON.
-5. **Set `schemaVersion: 2` and `connectedCanvas: true`.** This skill-driven migration intentionally opts old projects into cross-screen placement immediately. The editor's passive runtime migration may keep old JSON isolated for safety, but this explicit migration path should enable the new feature.
+5. **Set `schemaVersion: 2` and keep legacy `connectedCanvas` safe.** If the existing project already has an explicit boolean `connectedCanvas`, preserve it. If the project is pre-v2 or lacks the flag, write `"connectedCanvas": false` so offscreen/clipped legacy mockups do not leak into neighboring exports. New projects still default to connected canvas.
 6. **Keep screenshots pointed at existing files.** Do not rename screenshot files unless the old project already depended on numeric names and the migration needs them. Existing static paths are fine.
 7. **Handle custom themes without asking.** If the old project references a custom `themeId`, merge the matching theme object into the new `src/lib/constants.ts` when it can be found. If it cannot be recovered, leave the `themeId` in project JSON; the editor will fall back to `clean-light` and warn, and you should note that a custom theme needs manual restoration.
 8. **Merge package metadata when possible.** The template's dependencies and scripts must win for the screenshot editor, but preserve unrelated existing `dependencies`, `devDependencies`, and useful scripts unless they directly conflict.
@@ -147,6 +147,7 @@ const templateState =
   readJson(PROJECT_FILE) ||
   {};
 const existingState = readJson(PROJECT_FILE) || {};
+const hasExplicitConnectedCanvas = typeof existingState.connectedCanvas === "boolean";
 const existingDecks =
   existingState.slidesByDevice && typeof existingState.slidesByDevice === "object"
     ? existingState.slidesByDevice
@@ -229,7 +230,7 @@ function migrateSlide(slide) {
 }
 
 state.schemaVersion = 2;
-state.connectedCanvas = true;
+state.connectedCanvas = hasExplicitConnectedCanvas ? existingState.connectedCanvas : false;
 state.locales = Array.isArray(state.locales) && state.locales.length ? state.locales : [DEFAULT_LOCALE];
 state.locale = state.locales.includes(state.locale) ? state.locale : state.locales[0];
 state.device = DEVICE_KEYS.includes(state.device) ? state.device : "iphone";
@@ -301,12 +302,12 @@ bun run build 2>&1 | tee "$BACKUP_DIR/build.log"    # or the detected package-ma
 
 Start the dev server and verify in the browser:
 
-- The toolbar shows **Connected** enabled.
+- The toolbar shows **Isolated** for migrated pre-v2 decks, unless the project file already explicitly had `"connectedCanvas": true`.
 - Existing screens, copy, screenshot paths, and app icon are present.
 - Referenced screenshot files exist for every configured locale, or the final report lists the missing paths.
 - Device decks retained from the old project do not silently become template placeholders. If a retained deck has empty screenshots or lacks active-locale copy, report it as a follow-up instead of removing it.
 - A bundle export succeeds for the active device.
-- `app-store-screenshots.json` contains `"schemaVersion": 2` and `"connectedCanvas": true`.
+- `app-store-screenshots.json` contains `"schemaVersion": 2` and a boolean `"connectedCanvas"` value.
 
 ## Step 1: Gather Input (Before Scaffolding)
 
@@ -391,7 +392,7 @@ The starter project state lives in `app-store-screenshots.json`, not `src/lib/de
 If the user provided headlines, edit `app-store-screenshots.json` to set:
 - `appName`
 - `themeId` (one of `"clean-light" | "dark-bold" | "warm-editorial" | "ocean-fresh" | "bloom-roast"`, or add a matching entry to `THEMES` in `src/lib/constants.ts`)
-- `connectedCanvas` (`true` for new connected decks and Step 0 yes-migrations; passive runtime migrations may keep `false` until the user opts in)
+- `connectedCanvas` (`true` for new connected decks; migrated legacy decks should stay `false` until the user opts in)
 - Starter slides per device with the user's `label` + `headline` + screenshot paths
 
 Otherwise, leave the defaults — the user can rewrite copy in the editor.
@@ -575,7 +576,7 @@ The editor stores headlines and labels per-locale on each slide — switch to a 
 
 Inside the editor, the user picks a device, then hits **Export bundle**. A single zip downloads with every required size × every project locale for that device, organized as `<platform>/<device>/<WxH>/<locale>/NN-<layout>.png`. Repeat per device.
 
-When `connectedCanvas` is enabled, exports are crops of the connected canvas, not isolated screen renders. If a mockup sits halfway across screen 2 and screen 3, screen 2's PNG contains its left crop and screen 3's PNG contains its right crop exactly as placed. Legacy decks opened passively in the editor may start with `connectedCanvas: false`, in which case exports remain isolated until the user turns on Connected in the toolbar. Legacy decks migrated through Step 0 after the user says **Yes** must export with `connectedCanvas: true`.
+When `connectedCanvas` is enabled, exports are crops of the connected canvas, not isolated screen renders. If a mockup sits halfway across screen 2 and screen 3, screen 2's PNG contains its left crop and screen 3's PNG contains its right crop exactly as placed. Legacy decks should start with `connectedCanvas: false`, including Step 0 migrations, so old offscreen/clipped elements export as they did before. The user can turn on **Connected** after intentionally composing cross-screen elements.
 
 Before export, zoom out to inspect the connected canvas as a strip, then inspect the individual cropped screens. Cross-screen elements should feel intentional in the strip and harmless in isolation.
 
@@ -583,8 +584,8 @@ Project locales come from `app-store-screenshots.json` `locales` field — set d
 
 If exports come out blank or with black screen rectangles:
 - Verify source screenshots are RGB (not RGBA). The template flattens via `objectFit: cover`, but truly transparent sources can still produce black regions.
-- Confirm preload completed — check the browser console for `preloadImages` errors.
-- The export double-call (`toPng` twice in a row) is built-in; do not remove it.
+- Confirm the referenced screenshot paths exist under `public/`; export retries paths that were previously missing before it starts rendering.
+- Keep export scaling inside `html-to-image` via `canvasWidth`/`canvasHeight`; CSS `transform: scale(...)` can leave transparent gutters when App Store sizes differ slightly in aspect ratio.
 
 ## Step 6: Final QA Gate
 
@@ -602,6 +603,7 @@ If exports come out blank or with black screen rectangles:
 
 ### Export Quality
 - No clipped text or assets after scaling to export size
+- No transparent gutters or blank edge pixels in the generated PNGs
 - Cross-screen elements split cleanly across adjacent PNGs
 - Screenshots correctly aligned inside every device frame
 - Filenames sort correctly (zero-padded numeric prefixes)
@@ -628,14 +630,14 @@ The current template writes `schemaVersion: 2`. Existing projects made by earlie
 3. Preserves every existing slide/screen and device deck.
 4. Keeps pre-v2 decks in isolated-screen mode by setting `connectedCanvas: false`, so already-clipped phones or captions do not suddenly appear in neighboring exports.
 5. Lets the user opt into connected crops with the toolbar's Connected/Isolated control when they are ready to use cross-screen placement.
-6. Saves the upgraded state back to `app-store-screenshots.json` and `localStorage`.
+6. Saves the upgraded state back to `app-store-screenshots.json` and `localStorage` only after the file endpoint has loaded successfully, so stale browser cache cannot overwrite the canonical project file during dev-server restarts.
 
 There are two migration modes:
 
 - **Passive runtime migration:** when a user opens an old project in the current editor, keep `connectedCanvas: false` for pre-v2 JSON so old exports remain visually stable.
-- **Explicit skill migration:** when Step 0 detects an old implementation and the user answers **Yes**, upgrade the UI in place and write `schemaVersion: 2` plus `connectedCanvas: true` without asking more product/design questions.
+- **Explicit skill migration:** when Step 0 detects an old implementation and the user answers **Yes**, upgrade the UI in place and write `schemaVersion: 2`. Preserve an existing explicit `connectedCanvas` boolean; otherwise write `connectedCanvas: false` without asking more product/design questions.
 
-For explicit in-place upgrades, copy the current template's `src/components/editor/`, `src/lib/`, app routes, config, and package files into the project while preserving user assets and project JSON. If the old project had custom themes, merge those `THEMES` entries into `src/lib/constants.ts`; otherwise the editor falls back to `clean-light` and warns in the browser. Then run the app once and confirm `schemaVersion: 2` and `connectedCanvas: true` are present.
+For explicit in-place upgrades, copy the current template's `src/components/editor/`, `src/lib/`, app routes, config, and package files into the project while preserving user assets and project JSON. If the old project had custom themes, merge those `THEMES` entries into `src/lib/constants.ts`; otherwise the editor falls back to `clean-light` and warns in the browser. Then run the app once and confirm `schemaVersion: 2` and a boolean `connectedCanvas` are present.
 
 ## Template Reference
 

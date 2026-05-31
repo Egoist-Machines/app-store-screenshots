@@ -169,6 +169,7 @@ export function Inspector({
             <ScreenshotPicker
               label="Primary"
               value={slide.screenshot}
+              locale={locale}
               onChange={(v) => onChange({ screenshot: v })}
             />
           </div>
@@ -180,6 +181,7 @@ export function Inspector({
             <ScreenshotPicker
               label="Secondary (back layer)"
               value={slide.screenshotSecondary || ""}
+              locale={locale}
               onChange={(v) => onChange({ screenshotSecondary: v })}
             />
           </div>

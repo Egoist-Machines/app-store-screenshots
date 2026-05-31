@@ -102,7 +102,7 @@ export function ScreenshotEditor() {
   // Surface storage failures (quota exceeded etc.) so the user knows their work isn't safe.
   React.useEffect(() => {
     if (saveError) {
-      toast.error("Couldn't save changes locally", {
+      toast.error("Couldn't load or save project file", {
         description: saveError,
         duration: 8000,
       });
@@ -373,6 +373,8 @@ export function ScreenshotEditor() {
       return;
     }
     const locales = state.locales;
+    await preloadImages(assetPaths, { retryFailed: true });
+    await waitForPaint();
 
     const missingScreens = currentSlides
       .map((slide, index) => ({ slide, index }))
@@ -425,10 +427,6 @@ export function ScreenshotEditor() {
       await waitForPaint();
 
       for (const size of sizes) {
-        // Uniform downscale so smaller sizes shrink instead of getting cropped
-        // by html-to-image.
-        const scale = Math.min(size.w / cW, size.h / cH);
-
         for (let i = 0; i < currentSlides.length; i++) {
           const slide = currentSlides[i];
           unit += 1;
@@ -442,7 +440,7 @@ export function ScreenshotEditor() {
             continue;
           }
           try {
-            const dataUrl = await captureSlide(el, size.w, size.h, scale);
+            const dataUrl = await captureSlide(el, cW, cH, size.w, size.h);
             const base64 = dataUrl.split(",")[1] || "";
             const filename = `${String(i + 1).padStart(2, "0")}-${slide.layout}.png`;
             const path = `${platform}/${state.device}/${size.w}x${size.h}/${locale}/${filename}`;
@@ -491,10 +489,16 @@ export function ScreenshotEditor() {
     }
   }
 
-  async function captureSlide(el: HTMLElement, w: number, h: number, scale: number) {
-    // html-to-image needs the node at (0,0) and uniformly scaled so the
-    // captured pixel buffer matches the requested export size. Snapshot the
-    // styles we touch so we can restore them after capture.
+  async function captureSlide(
+    el: HTMLElement,
+    sourceW: number,
+    sourceH: number,
+    exportW: number,
+    exportH: number,
+  ) {
+    // html-to-image needs the node at (0,0). Let the library scale the source
+    // canvas into the requested output dimensions; CSS transforms leave
+    // transparent gutters when export aspect ratios differ by a few pixels.
     const prev = {
       left: el.style.left,
       top: el.style.top,
@@ -506,13 +510,15 @@ export function ScreenshotEditor() {
     el.style.left = "0px";
     el.style.top = "0px";
     el.style.position = "absolute";
-    el.style.transform = `scale(${scale})`;
+    el.style.transform = "none";
     el.style.transformOrigin = "top left";
     el.style.zIndex = "-1";
     try {
       const dataUrl = await toPng(el, {
-        width: w,
-        height: h,
+        width: sourceW,
+        height: sourceH,
+        canvasWidth: exportW,
+        canvasHeight: exportH,
         pixelRatio: 1,
         cacheBust: false,
       });
