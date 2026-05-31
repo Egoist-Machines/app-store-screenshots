@@ -47,6 +47,10 @@ Thumbs.db
 !.vscode/extensions.json
 !.vscode/settings.json
 
+# Skill template user assets
+skills/app-store-screenshots/template/public/app-icon.png
+skills/app-store-screenshots/template/public/screenshots/**/*.png
+
 # Temporary files
 *.tmp
 *.temp
