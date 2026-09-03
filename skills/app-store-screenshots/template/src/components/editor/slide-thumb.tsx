@@ -117,6 +117,8 @@ export function SlideThumb({
                 appName={appName}
                 appIcon={appIcon}
                 connectedCanvas
+                panoramaStartPanel={start}
+                panoramaTotalPanels={slides.length}
                 editable={false}
               />
             ) : (

@@ -5,7 +5,9 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "test": "node --test tests/*.spec.mjs",
+    "lint": "tsc --noEmit"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.1.0",

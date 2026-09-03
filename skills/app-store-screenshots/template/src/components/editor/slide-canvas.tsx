@@ -24,6 +24,7 @@ import {
   tabletPW,
 } from "@/lib/constants";
 import { toTextElementId } from "@/lib/elements";
+import { panoramaGeometry } from "@/lib/export-core.mjs";
 import { img } from "@/lib/image-cache";
 import { pickText, resolveScreenshot } from "@/lib/locale";
 import {
@@ -128,6 +129,9 @@ type DeckCanvasProps = {
   appName?: string;
   appIcon?: string;
   connectedCanvas?: boolean;
+  // Used by thumbnails or export windows that render only part of a deck.
+  panoramaStartPanel?: number;
+  panoramaTotalPanels?: number;
   editable?: boolean;
   edit?: DeckEditHandlers;
   selectedElement?: SelectedElement | null;
@@ -572,6 +576,8 @@ export function DeckCanvas({
   appName,
   appIcon,
   connectedCanvas = true,
+  panoramaStartPanel = 0,
+  panoramaTotalPanels,
   editable,
   edit,
   selectedElement = null,
@@ -652,6 +658,17 @@ export function DeckCanvas({
         );
       })}
 
+      {connectedCanvas && theme.panoramaAsset && (
+        <DeckPanorama
+          cW={cW}
+          cH={cH}
+          renderedScreenCount={slides.length}
+          startPanel={panoramaStartPanel}
+          totalPanels={panoramaTotalPanels}
+          theme={theme}
+        />
+      )}
+
       {slides.map((slide, index) => {
         if (slide.layout === "feature-graphic" || device === "feature-graphic") return null;
         const selectedElementId =
@@ -706,6 +723,54 @@ export function DeckCanvas({
         );
       })}
     </div>
+  );
+}
+
+function DeckPanorama({
+  cW,
+  cH,
+  renderedScreenCount,
+  startPanel,
+  totalPanels,
+  theme,
+}: {
+  cW: number;
+  cH: number;
+  renderedScreenCount: number;
+  startPanel: number;
+  totalPanels?: number;
+  theme: Theme;
+}) {
+  const geometry = panoramaGeometry(
+    cW,
+    renderedScreenCount,
+    startPanel,
+    theme.panoramaPanels,
+    totalPanels,
+  );
+
+  return (
+    <img
+      aria-hidden="true"
+      alt=""
+      src={img(theme.panoramaAsset)}
+      draggable={false}
+      style={{
+        position: "absolute",
+        display: "block",
+        left: geometry.left,
+        top: 0,
+        width: geometry.width,
+        minWidth: geometry.width,
+        maxWidth: "none",
+        height: cH,
+        objectFit: "fill",
+        objectPosition: "left top",
+        pointerEvents: "none",
+        zIndex: 1,
+        userSelect: "none",
+      }}
+    />
   );
 }
 

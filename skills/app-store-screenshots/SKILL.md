@@ -16,6 +16,8 @@ Scaffold a pre-built Next.js + ShadCN editor that lets the user design and expor
 - Auto-save to **`app-store-screenshots.json`** at the project root (git-trackable) + `localStorage` mirror
 - Easy iOS ↔ Android platform switch — separate slide decks live side by side
 - One-click bulk PNG export at every Apple/Google-required resolution via `html-to-image`
+- Optional full-deck panorama artwork that keeps its declared multi-panel width
+- SVG raster preflight plus opaque RGB PNG output and stable archive ordering
 - Light/dark variant toggle per slide, theme presets, locale select
 - Guided in-place migration for older projects created by this skill; passive and explicit migrations keep legacy decks isolated until the user intentionally opts into connected canvas
 
@@ -387,6 +389,8 @@ public/
 
 The starter project state lives in `app-store-screenshots.json`, not `src/lib/defaults.ts`. If the user names their screenshots differently, either rename them or update the relevant slide `screenshot` fields in `app-store-screenshots.json` so the initial deck points at the right files. The user can also drag-drop files directly into the editor at runtime — those uploads are written to `public/screenshots/uploaded/<hash>.png` when the dev server is running.
 
+For a continuous background across the full connected deck, add `panoramaAsset` and `panoramaPanels` to the selected custom theme in `src/lib/constants.ts`. Use the exact number of panels in the source artwork. Design the asset at the full-deck aspect ratio and keep SVG dependencies self-contained. The template preserves the declared width in thumbnails and export windows, rasterizes SVG patterns and symbols before capture, and places the panorama behind all movable slide elements.
+
 ### (Optional) Seed Initial Copy
 
 If the user provided headlines, edit `app-store-screenshots.json` to set:
@@ -576,6 +580,8 @@ The editor stores headlines and labels per-locale on each slide — switch to a 
 
 Inside the editor, the user picks a device, then hits **Export bundle**. A single zip downloads with every required size × every project locale for that device, organized as `<platform>/<device>/<WxH>/<locale>/NN-<layout>.png`. Repeat per device.
 
+The exporter captures each screen once at the design resolution, scales that master for every required size, and encodes each result as an opaque RGB PNG. It inserts files into the ZIP in stable path order with fixed entry timestamps. This keeps zero-padded screens in narrative order and prevents transparent output from reaching store upload tools.
+
 When `connectedCanvas` is enabled, exports are crops of the connected canvas, not isolated screen renders. If a mockup sits halfway across screen 2 and screen 3, screen 2's PNG contains its left crop and screen 3's PNG contains its right crop exactly as placed. Legacy decks should start with `connectedCanvas: false`, including Step 0 migrations, so old offscreen/clipped elements export as they did before. The user can turn on **Connected** after intentionally composing cross-screen elements.
 
 Before export, zoom out to inspect the connected canvas as a strip, then inspect the individual cropped screens. Cross-screen elements should feel intentional in the strip and harmless in isolation.
@@ -604,9 +610,11 @@ If exports come out blank or with black screen rectangles:
 ### Export Quality
 - No clipped text or assets after scaling to export size
 - No transparent gutters or blank edge pixels in the generated PNGs
+- PNG color type is RGB with no alpha channel
 - Cross-screen elements split cleanly across adjacent PNGs
 - Screenshots correctly aligned inside every device frame
 - Filenames sort correctly (zero-padded numeric prefixes)
+- ZIP entries follow the same stable sorted order
 - Feature Graphic exports cleanly at 1024×500 (no device frame)
 
 ## Common Mistakes

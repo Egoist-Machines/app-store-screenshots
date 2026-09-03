@@ -84,6 +84,10 @@ export type Theme = {
   fgAlt: string;       // text on bgAlt
   accent: string;
   muted: string;
+  // Optional artwork rendered once across a connected deck. panoramaPanels
+  // declares the artwork width independently of any preview or export window.
+  panoramaAsset?: string;
+  panoramaPanels?: number;
 };
 
 export type ProjectState = {

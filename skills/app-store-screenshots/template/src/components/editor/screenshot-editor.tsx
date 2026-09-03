@@ -11,7 +11,14 @@ import {
 } from "@/lib/constants";
 import { detectPlatform, nid } from "@/lib/defaults";
 import { isBuiltInElementId, isTextElementId, textElementKey } from "@/lib/elements";
-import { preloadImages } from "@/lib/image-cache";
+import {
+  addStableZipEntries,
+  buildExportPath,
+  panoramaGeometry,
+  renderOpaquePngSlice,
+} from "@/lib/export-core.mjs";
+import { preloadImages, type ImagePreloadRequest } from "@/lib/image-cache";
+import { imagePreloadKey } from "@/lib/image-preflight.mjs";
 import { resolveScreenshot, writeLocalized } from "@/lib/locale";
 import { useProject } from "@/lib/storage";
 import type {
@@ -71,30 +78,70 @@ export function ScreenshotEditor() {
     }
   }, [hydrated, state.themeId]);
 
-  const assetPaths = React.useMemo(() => {
-    const paths = new Set<string>();
-    paths.add("/mockup.png");
-    if (state.appIcon) paths.add(state.appIcon);
+  const assetRequests = React.useMemo(() => {
+    const requests = new Map<string, string | ImagePreloadRequest>();
+    const add = (request: string | ImagePreloadRequest) => {
+      const path = typeof request === "string" ? request : request.path;
+      const existing = requests.get(path);
+      const existingArea =
+        typeof existing === "string" || !existing?.rasterizeTo
+          ? 0
+          : existing.rasterizeTo.width * existing.rasterizeTo.height;
+      const nextArea =
+        typeof request === "string" || !request.rasterizeTo
+          ? 0
+          : request.rasterizeTo.width * request.rasterizeTo.height;
+      if (!existing || nextArea > existingArea) requests.set(path, request);
+    };
+    add("/mockup.png");
+    if (state.appIcon) add(state.appIcon);
     // Preload every locale variant so bulk export doesn't race image loads.
     const allSlides: Slide[] = Object.values(state.slidesByDevice).flat();
     for (const s of allSlides) {
       for (const raw of [s.screenshot, s.screenshotSecondary]) {
         if (!raw || raw.startsWith("data:")) continue;
         if (raw.includes("{locale}")) {
-          for (const loc of state.locales) paths.add(resolveScreenshot(raw, loc));
+          for (const loc of state.locales) add(resolveScreenshot(raw, loc));
         } else {
-          paths.add(raw);
+          add(raw);
         }
       }
     }
-    return Array.from(paths).sort();
-  }, [state.slidesByDevice, state.appIcon, state.locales]);
-  const assetSig = assetPaths.join("|");
+    if (theme.panoramaAsset) {
+      const { cW, cH } = getCanvas(state.device, state.orientation);
+      const { artworkPanels } = panoramaGeometry(
+        cW,
+        currentSlides.length,
+        0,
+        theme.panoramaPanels,
+        currentSlides.length,
+      );
+      add({
+        path: theme.panoramaAsset,
+        rasterizeTo: { width: artworkPanels * cW, height: cH },
+      });
+    }
+    return Array.from(requests.values()).sort((left, right) => {
+      const leftKey = imagePreloadKey(left);
+      const rightKey = imagePreloadKey(right);
+      return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
+    });
+  }, [
+    currentSlides.length,
+    state.appIcon,
+    state.device,
+    state.locales,
+    state.orientation,
+    state.slidesByDevice,
+    theme.panoramaAsset,
+    theme.panoramaPanels,
+  ]);
+  const assetSig = assetRequests.map(imagePreloadKey).join("|");
 
   React.useEffect(() => {
     if (!hydrated) return;
-    preloadImages(assetPaths).finally(() => setReady(true));
-    // assetPaths is derived from assetSig; depending on the string keeps the
+    preloadImages(assetRequests).finally(() => setReady(true));
+    // assetRequests is derived from assetSig; depending on the string keeps the
     // effect from re-firing when slidesByDevice churns without path changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hydrated, assetSig]);
@@ -373,7 +420,7 @@ export function ScreenshotEditor() {
       return;
     }
     const locales = state.locales;
-    await preloadImages(assetPaths, { retryFailed: true });
+    await preloadImages(assetRequests, { retryFailed: true });
     await waitForPaint();
 
     const missingScreens = currentSlides
@@ -415,42 +462,76 @@ export function ScreenshotEditor() {
 
     const { cW, cH } = getCanvas(state.device, state.orientation);
     const platform = detectPlatform(state.device);
-    const zip = new JSZip();
     const totalUnits = sizes.length * locales.length * currentSlides.length;
     let unit = 0;
     let okCount = 0;
     let failed = 0;
     const errors: string[] = [];
+    const entries: Array<{ path: string; data: Uint8Array }> = [];
 
     for (const locale of locales) {
       setExportLocaleOverride(locale);
       await waitForPaint();
 
-      for (const size of sizes) {
-        for (let i = 0; i < currentSlides.length; i++) {
-          const slide = currentSlides[i];
+      for (let i = 0; i < currentSlides.length; i++) {
+        const slide = currentSlides[i];
+        setExportSlideIndex(i);
+        await waitForPaint();
+        const el = exportRef.current;
+        if (!el) {
+          for (const size of sizes) {
+            unit += 1;
+            failed += 1;
+            errors.push(`${locale} ${size.w}x${size.h} screen ${i + 1}: render target missing`);
+          }
+          continue;
+        }
+
+        let masterImage: HTMLImageElement;
+        try {
+          setExporting(`${unit + 1}/${totalUnits}`);
+          const masterDataUrl = await captureSlide(el, cW, cH, cW, cH);
+          masterImage = await decodePng(masterDataUrl);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          for (const size of sizes) {
+            unit += 1;
+            failed += 1;
+            errors.push(`${locale} ${size.w}x${size.h} screen ${i + 1}: ${message}`);
+          }
+          console.error("Export failed", { slideId: slide.id, locale }, error);
+          continue;
+        }
+
+        for (const size of sizes) {
           unit += 1;
           setExporting(`${unit}/${totalUnits}`);
-          setExportSlideIndex(i);
-          await waitForPaint();
-          const el = exportRef.current;
-          if (!el) {
-            failed += 1;
-            errors.push(`${locale} ${size.w}×${size.h} screen ${i + 1}: render target missing`);
-            continue;
-          }
           try {
-            const dataUrl = await captureSlide(el, cW, cH, size.w, size.h);
-            const base64 = dataUrl.split(",")[1] || "";
-            const filename = `${String(i + 1).padStart(2, "0")}-${slide.layout}.png`;
-            const path = `${platform}/${state.device}/${size.w}x${size.h}/${locale}/${filename}`;
-            zip.file(path, base64, { base64: true });
+            const data = await renderOpaquePngSlice(
+              masterImage,
+              0,
+              0,
+              cW,
+              cH,
+              size.w,
+              size.h,
+            );
+            const path = buildExportPath({
+              platform,
+              device: state.device,
+              width: size.w,
+              height: size.h,
+              locale,
+              index: i,
+              layout: slide.layout,
+            });
+            entries.push({ path, data });
             okCount += 1;
-          } catch (e) {
+          } catch (error) {
             failed += 1;
-            const msg = e instanceof Error ? e.message : String(e);
-            errors.push(`${locale} ${size.w}×${size.h} screen ${i + 1}: ${msg}`);
-            console.error("Export failed", { slideId: slide.id, locale, size }, e);
+            const message = error instanceof Error ? error.message : String(error);
+            errors.push(`${locale} ${size.w}x${size.h} screen ${i + 1}: ${message}`);
+            console.error("Export failed", { slideId: slide.id, locale, size }, error);
           }
         }
       }
@@ -461,7 +542,19 @@ export function ScreenshotEditor() {
 
     if (okCount > 0) {
       try {
-        const blob = await zip.generateAsync({ type: "blob" });
+        const zip = new JSZip();
+        addStableZipEntries(entries, (entry, date) => {
+          zip.file(entry.path, entry.data, {
+            binary: true,
+            createFolders: false,
+            date,
+          });
+        });
+        const blob = await zip.generateAsync({
+          type: "blob",
+          compression: "STORE",
+          platform: "UNIX",
+        });
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
@@ -532,6 +625,14 @@ export function ScreenshotEditor() {
       el.style.transformOrigin = prev.transformOrigin;
       el.style.zIndex = prev.zIndex;
     }
+  }
+
+  async function decodePng(dataUrl: string) {
+    const image = new Image();
+    image.decoding = "async";
+    image.src = dataUrl;
+    await image.decode();
+    return image;
   }
 
   // ---------- Render ----------
