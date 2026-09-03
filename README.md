@@ -16,6 +16,9 @@ Example screenshots generated with this skill were accepted for [Bloom Coffee Sh
 - Uploads picked screenshots into `public/screenshots/uploaded/<hash>.png`
 - Supports iOS, iPad, Android phone, Android tablet, and Play Store feature graphic decks
 - Exports exact PNG bundles for all required App Store and Google Play sizes
+- Supports one full-deck panorama asset without shrinking it to a single screen
+- Rasterizes SVG artwork before capture so patterns and symbols match the live editor
+- Writes opaque RGB PNGs in stable filename and archive order
 - Supports locales, RTL-aware copy/layout guidance, reusable themes, and in-place project migration
 
 ## Current Editor UI
@@ -28,6 +31,7 @@ Example screenshots generated with this skill were accepted for [Bloom Coffee Sh
 - **Device selector** - design for iPhone, iPad, Android phone, Android tablets, and feature graphic formats.
 - **Autosave** - writes to disk through `/api/project` and mirrors to `localStorage` for instant reloads.
 - **Export bundle** - downloads a zip organized by platform, device, resolution, and locale.
+- **Reliable output** - preflights SVG artwork, removes PNG alpha channels, and sorts archive entries.
 
 Tip: when capturing source iPhone screenshots, the 6.1-inch simulator is usually the easiest starting point because it reduces manual image adjustment inside the frames.
 
@@ -183,6 +187,7 @@ Screenshots are designed at the largest size for each platform and scaled down f
 - The editor reads `localStorage` first for fast paint, then reconciles with the project file.
 - Older project files are migrated to schema v2 on load while keeping legacy decks isolated unless connected mode was already enabled.
 - Custom themes live in `src/lib/constants.ts`; unknown theme ids fall back to `clean-light`.
+- A custom theme may set `panoramaAsset` and `panoramaPanels` to place one continuous image behind a connected deck.
 
 ## Design Standards
 

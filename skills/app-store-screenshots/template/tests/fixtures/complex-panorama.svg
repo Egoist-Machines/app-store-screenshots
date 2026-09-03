@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 200">
+  <defs>
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M0 40 40 0" stroke="#d4d4d4" stroke-width="2"/>
+    </pattern>
+    <symbol id="pin" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="9" fill="#0c5d95"/>
+      <path d="M7 12h10" stroke="white" stroke-width="2"/>
+    </symbol>
+  </defs>
+  <rect width="800" height="200" fill="url(#grid)"/>
+  <path d="M0 130C180 20 360 190 800 80" fill="none" stroke="#c75b3d" stroke-width="12"/>
+  <use href="#pin" x="120" y="68" width="64" height="64"/>
+  <use href="#pin" x="610" y="52" width="64" height="64"/>
+</svg>

@@ -17,6 +17,8 @@ bun dev       # http://localhost:3000
 - **Auto-save (git-trackable)** — every change is persisted within ~600ms to **`app-store-screenshots.json`** at the project root (via `/api/project`) **and** mirrored to `localStorage` as an instant-paint cache. Commit `app-store-screenshots.json` and you can `git clone` to another machine and resume exactly where you left off.
 - **Multi-device decks** — iOS and Android slide decks live side by side; switching the platform tab preserves both.
 - **One-click export** — bulk PNG export at any required App Store / Play Store resolution using `html-to-image`; each PNG is rendered from the current connected or isolated deck mode.
+- **Deterministic image preflight** - SVG patterns, symbols, and filters are rasterized once at their intended canvas size before preview and export.
+- **Store-ready PNGs** - every exported PNG uses RGB color type with no alpha channel, and ZIP entries use stable timestamps and filename order.
 - **Project migration** — older `app-store-screenshots.json` files are migrated on load. Existing per-slide transforms remain valid, and connected crops become available without rewriting the deck by hand.
 - **Legacy-safe mode** — pre-v2 projects opened directly in the editor start in isolated-screen mode first, then can opt into connected crops with the toolbar's Connected/Isolated control. Skill-run in-place migrations keep legacy decks isolated unless the project had already explicitly opted into connected canvas.
 
@@ -36,6 +38,27 @@ Update the matching `screenshot` fields in `app-store-screenshots.json` to point
 
 The toolbar dropdown lists every Apple/Google-required size for the current device. Click **Export bundle** to download a zip. In Connected mode, each PNG is clipped from the connected canvas, so an element that straddles two screens appears split exactly where you placed it. In Isolated mode, each screen clips its own elements and legacy offscreen content cannot leak into neighboring exports.
 
+### Full-deck panorama artwork
+
+A custom theme can place one continuous SVG or raster image behind every connected screen:
+
+```ts
+"campaign-map": {
+  id: "campaign-map",
+  name: "Campaign map",
+  bg: "#f6f1ea",
+  bgAlt: "#102a43",
+  fg: "#102a43",
+  fgAlt: "#fff8ec",
+  accent: "#c75b3d",
+  muted: "#6e7860",
+  panoramaAsset: "/campaign/journey.svg",
+  panoramaPanels: 8,
+}
+```
+
+Set `panoramaPanels` to the source artwork's exact panel count. Design its aspect ratio as `(panoramaPanels * canvas width) / canvas height`. The editor preserves that declared width even inside three-screen thumbnails or one-screen export windows. Keep SVG assets self-contained. The preflight cache rasterizes them at full deck size so reusable patterns and symbols render the same in preview and export.
+
 ## Customizing
 
 | Where | What |
@@ -51,6 +74,8 @@ The toolbar dropdown lists every Apple/Google-required size for the current devi
 
 - `mockup.png` is the iPhone bezel overlay; replacing it requires re-measuring the `PHONE_SCREEN` constants.
 - Image preloading converts every static path to a base64 data URI before exports run, and export retries paths that were previously missing — this prevents the html-to-image race where some slide screenshots come out black.
+- SVG files are rasterized before capture. This avoids browser differences when `html-to-image` serializes patterns, symbols, masks, or filters.
+- Exported PNGs are encoded as opaque RGB files. ZIP paths and timestamps are stable, so extracted screenshots always sort by resolution, locale, and zero-padded screen number.
 - Reset via the toolbar's circular arrow icon clears in-memory state and reloads the default screens. To wipe disk state too, delete `app-store-screenshots.json`.
 - **Persistence model** — the canonical state lives in `app-store-screenshots.json` (git-tracked). On load, the editor reads localStorage first for instant paint, then overwrites with the file contents if present; if the file endpoint is unavailable, autosave is blocked so stale cache cannot overwrite disk. On save, both are written. If you ever see a conflict, the file always wins.
 - **Migration model** — schema v1 projects do not need a manual conversion. On first load, the editor upgrades localized text and transform records, writes `schemaVersion: 2`, preserves all existing screens, and keeps `connectedCanvas: false` so old offscreen/clipped elements export exactly as isolated screens. Turn on **Connected** in the toolbar when you want elements to cross screen edges. Explicit skill migrations preserve an existing `connectedCanvas` choice, otherwise they keep legacy decks isolated too.
